@@ -10,7 +10,10 @@
     "build": "vinext build",
     "start": "wrangler dev --config dist/server/wrangler.json",
     "lint": "oxlint",
-    "format": "oxfmt"
+    "format": "oxfmt",
+    "typecheck": "tsc --noEmit --incremental false",
+    "lint:app": "oxlint app lib components/knowledge-network.tsx components/note-visuals.tsx tools",
+    "test:crud": "node tools/crud-smoke.cjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",

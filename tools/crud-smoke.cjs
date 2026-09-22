@@ -5,6 +5,10 @@ const { chromium } = require(
 );
 const assert = require('node:assert/strict');
 const path = require('node:path');
+const fs = require('node:fs');
+const testOutput = path.join(__dirname, '..', 'test-results');
+fs.mkdirSync(testOutput, { recursive: true });
+const baseUrl = process.env.COURSE_KB_TEST_URL || 'http://localhost:3000';
 const now = new Date().toISOString();
 const course = (id, name) => ({
   id,
@@ -86,7 +90,7 @@ let revision = 1;
     headless: true,
   });
   const context = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
+    viewport: { width: 1920, height: 1080 },
   });
   const page = await context.newPage();
   const errors = [];
@@ -109,7 +113,7 @@ let revision = 1;
   const settle = () => page.waitForTimeout(850);
   async function go(hash) {
     await settle();
-    await page.goto(`http://localhost:3000/#${hash}`);
+    await page.goto(`${baseUrl}/#${hash}`);
     await page.getByRole('button', { name: '个人设置', exact: true }).waitFor();
     await settle();
   }
@@ -144,6 +148,7 @@ let revision = 1;
       .click();
     assert.equal(state.courses.length, 2);
     console.log('PASS course search and cancel deletion');
+    await page.screenshot({ path: path.join(testOutput, '01-courses.png') });
 
     await go('view=course&course=c1');
     await page
@@ -175,13 +180,11 @@ let revision = 1;
     await rename('更名资料.txt');
     assert.equal(state.courses[0].materials[0].name, '更名资料.txt');
     await page.getByLabel('搜索资料', { exact: true }).fill('');
-    await page
-      .locator('input[type=file]')
-      .setInputFiles({
-        name: '新增资料.txt',
-        mimeType: 'text/plain',
-        buffer: Buffer.from('新增测试文本'),
-      });
+    await page.locator('input[type=file]').setInputFiles({
+      name: '新增资料.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('新增测试文本'),
+    });
     await page
       .locator('.material-row')
       .filter({ hasText: '新增资料.txt' })
@@ -198,6 +201,7 @@ let revision = 1;
     await settle();
     assert.equal(state.courses[0].materials.length, 1);
     console.log('PASS material upload/search/rename/remove');
+    await page.screenshot({ path: path.join(testOutput, '02-materials.png') });
 
     await go('view=study&course=c1&session=s1');
     await page.getByLabel('搜索对话', { exact: true }).fill('对话检索词');
@@ -263,6 +267,7 @@ let revision = 1;
     await confirm();
     assert.equal(state.tasks.length, 0);
     console.log('PASS task full edit/search/delete');
+    await page.screenshot({ path: path.join(testOutput, '03-tasks.png') });
 
     await page.locator('.add-task summary').click();
     await page
@@ -325,7 +330,10 @@ let revision = 1;
     await page
       .getByLabel('搜索概念或关联笔记', { exact: true })
       .fill('新增概念');
-    await page.getByRole('button', { name: '新增概念', exact: true }).first().click();
+    await page
+      .getByRole('button', { name: '新增概念', exact: true })
+      .first()
+      .click();
     await page.getByRole('button', { name: '编辑概念', exact: true }).click();
     await page.getByRole('button', { name: '删除概念', exact: true }).click();
     await settle();
@@ -425,26 +433,14 @@ let revision = 1;
     await page.setViewportSize({ width: 430, height: 900 });
     await go('view=home');
     await page.screenshot({
-      path: path.join(
-        __dirname,
-        '..',
-        '..',
-        'gui-test-screenshots',
-        'crud-mobile.png',
-      ),
+      path: path.join(testOutput, 'crud-mobile.png'),
       fullPage: true,
     });
     assert.deepEqual(errors, []);
     console.log('PASS no browser runtime errors');
   } catch (error) {
     await page.screenshot({
-      path: path.join(
-        __dirname,
-        '..',
-        '..',
-        'gui-test-screenshots',
-        'crud-failure.png',
-      ),
+      path: path.join(testOutput, 'crud-failure.png'),
       fullPage: true,
     });
     throw error;
