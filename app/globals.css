@@ -489,6 +489,9 @@ a {
 .course-delete-button {
   margin-top: 12px;
 }
+.course-settings-delete {
+  justify-self: start;
+}
 .course-tabs {
   display: flex;
   gap: 24px;

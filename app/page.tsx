@@ -1590,6 +1590,16 @@ export default function Home() {
                 </p>
                 <div className="actions">
                   <button
+                    className="danger"
+                    aria-label={`删除课程 ${course.name}`}
+                    title="删除课程"
+                    disabled={isSending || !!uploadProgress}
+                    onClick={() => setPendingCourseDelete(course)}
+                  >
+                    <Trash2 size={17} />
+                    删除课程
+                  </button>
+                  <button
                     className="text-button"
                     onClick={() =>
                       go('study', {
@@ -1607,16 +1617,6 @@ export default function Home() {
                     onClick={() => go('materials', { course: course.id })}
                   >
                     <FileText size={17} />
-                  </button>
-                  <button
-                    className="danger"
-                    aria-label={`删除课程 ${course.name}`}
-                    title="删除课程"
-                    disabled={isSending || !!uploadProgress}
-                    onClick={() => setPendingCourseDelete(course)}
-                  >
-                    <Trash2 size={17} />
-                    删除课程
                   </button>
                 </div>
               </article>
@@ -1834,7 +1834,7 @@ export default function Home() {
           </label>
           <small className="muted">修改后自动保存</small>
           <button
-            className="danger"
+            className="danger course-settings-delete"
             disabled={isSending || !!uploadProgress}
             onClick={() => setPendingCourseDelete(activeCourse)}
           >
