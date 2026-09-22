@@ -4,6 +4,7 @@
 
 - 在独立提交目录执行 `npm ci --no-audit --no-fund`，从锁文件安装 702 个包成功，未复制原目录 node_modules。
 - 本机 Node.js v22.14.0。
+- 另用 `git clone --no-hardlinks` 克隆已提交版本到全新目录，重新 `npm ci` 和类型检查通过，并在 3011 端口启动验证。
 - `npm run typecheck` 通过。
 - `npm run lint:app` 通过。
 - 未配置真实 AI 密钥，在 3010 端口启动成功，首页 HTTP 200。
