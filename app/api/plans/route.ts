@@ -21,7 +21,12 @@ export async function POST(request: Request) {
     typeof body.upcomingCount !== 'number'
   )
     return Response.json({ error: '无效的规划数据' }, { status: 400 });
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (apiKey && !/^[\x21-\x7E]+$/.test(apiKey))
+    return Response.json(
+      { error: 'AI 密钥格式不正确，请仅填写服务平台生成的密钥，不要包含说明文字或空格。' },
+      { status: 503 },
+    );
   if (!apiKey)
     return Response.json(
       { error: '尚未连接 AI 服务。数据建议仍可使用。' },
