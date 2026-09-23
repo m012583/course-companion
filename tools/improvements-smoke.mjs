@@ -87,14 +87,24 @@ try {
     await page.getByLabel('阅读位置', { exact: true }).inputValue(),
     '1',
   );
+  await page.locator('.passage-quote').evaluate((element) => {
+    const range = document.createRange();
+    range.setStart(element.firstChild, 0);
+    range.setEnd(element.firstChild, 4);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
   await page
-    .getByRole('button', { name: '本段保存为笔记', exact: true })
+    .getByRole('button', { name: '选文保存为笔记', exact: true })
     .click();
   await page.getByRole('button', { name: '保存笔记', exact: true }).click();
   await settled();
   let saved = (await getState()).state;
   const note = saved.notes.find((n) => n.title.includes('第二段'));
   assert.equal(note.sources[0].fileId, file.fileId);
+  assert.equal(note.text, '可逆方阵');
+  assert.equal(note.sources[0].quote, '可逆方阵');
   await page.getByText('复习与掌握情况', { exact: true }).click();
   await page.getByRole('button', { name: '复习这条', exact: true }).click();
   await page.getByLabel('你的回答', { exact: true }).fill('可逆方阵满秩');
@@ -169,22 +179,18 @@ try {
   assert.equal(backup.files.length, 1);
   const broken = structuredClone(backup);
   broken.files[0].sha256 = '0'.repeat(64);
-  await page
-    .getByLabel('选择完整备份文件', { exact: true })
-    .setInputFiles({
-      name: 'broken.json',
-      mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify(broken)),
-    });
+  await page.getByLabel('选择完整备份文件', { exact: true }).setInputFiles({
+    name: 'broken.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(broken)),
+  });
   await page.getByRole('alert').filter({ hasText: '附件校验失败' }).waitFor();
   backup.state.courses[0].name = '已恢复课程';
-  await page
-    .getByLabel('选择完整备份文件', { exact: true })
-    .setInputFiles({
-      name: 'restore.json',
-      mimeType: 'application/json',
-      buffer: Buffer.from(JSON.stringify(backup)),
-    });
+  await page.getByLabel('选择完整备份文件', { exact: true }).setInputFiles({
+    name: 'restore.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify(backup)),
+  });
   await page
     .getByRole('button', { name: '确认替换并恢复', exact: true })
     .click();
