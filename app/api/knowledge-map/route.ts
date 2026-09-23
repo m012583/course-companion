@@ -1,3 +1,4 @@
+import { readAIConfig } from '@/lib/ai-settings';
 import { noteFingerprint, parseConceptGraph } from '@/lib/note-graph';
 export async function POST(request: Request) {
   if (
@@ -25,10 +26,14 @@ export async function POST(request: Request) {
       { error: '这篇笔记超过 24,000 字符，请先拆分为几篇主题笔记再生成。' },
       { status: 413 },
     );
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const config = await readAIConfig();
+  const apiKey = config.apiKey;
   if (apiKey && !/^[\x21-\x7E]+$/.test(apiKey))
     return Response.json(
-      { error: 'AI 密钥格式不正确，请仅填写服务平台生成的密钥，不要包含说明文字或空格。' },
+      {
+        error:
+          'AI 密钥格式不正确，请仅填写服务平台生成的密钥，不要包含说明文字或空格。',
+      },
       { status: 503 },
     );
   if (!apiKey)
@@ -40,7 +45,7 @@ export async function POST(request: Request) {
     content = body.content;
   try {
     const response = await fetch(
-      `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
+      `${config.baseUrl.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: {
@@ -48,12 +53,13 @@ export async function POST(request: Request) {
           Authorization: `Bearer ${apiKey}`,
           'User-Agent': 'course-knowledge-base/0.2',
         },
-        signal: AbortSignal.timeout(90000),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(90000)]),
+        redirect: 'manual',
         body: JSON.stringify({
           model:
             typeof body.model === 'string' && body.model
               ? body.model
-              : process.env.OPENAI_MODEL || 'deepseek-v4-flash',
+              : config.model,
           temperature: 0.1,
           max_tokens: 2400,
           messages: [
@@ -102,7 +108,7 @@ export async function POST(request: Request) {
             : error instanceof SyntaxError
               ? '模型返回的图谱格式不正确，请重试。'
               : error instanceof Error
-                ? error.message
+                ? '服务请求失败，请检查连接后重试。'
                 : '生成失败，已有图谱已保留。',
       },
       { status: 502 },

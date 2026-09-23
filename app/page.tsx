@@ -1,4 +1,8 @@
 'use client';
+import AISettings from '@/components/ai-settings';
+import { useNoteDrafts } from '@/components/draft-storage';
+import { searchWorkspace, type SearchHit } from '@/lib/search';
+import { readLines } from '@/lib/streams';
 import PassageReader from '@/components/passage-reader';
 import { suggestedLinks } from '@/lib/learning';
 import DataManagement from '@/components/data-management';
@@ -98,13 +102,6 @@ const matchesQuery = (query: string, ...values: Array<string | undefined>) =>
     .join(' ')
     .toLocaleLowerCase()
     .includes(query.trim().toLocaleLowerCase());
-const MODELS = [
-  ['deepseek-v4-flash', 'DeepSeek V4 Flash'],
-  ['deepseek-v4-pro', 'DeepSeek V4 Pro'],
-  ['glm-5.2', 'GLM 5.2'],
-  ['kimi-k2.7-code', 'Kimi K2.7 Code'],
-  ['kimi-k2.6', 'Kimi K2.6'],
-];
 const DEFAULT_PREFERENCES: Preferences = {
   brandName: '课伴',
   userName: '同学',
@@ -265,6 +262,38 @@ async function extractText(
   };
 }
 export default function Home() {
+  const {
+    draftNote,
+    setDraftNote,
+    drafts,
+    discard: discardDraft,
+    error: draftError,
+  } = useNoteDrafts();
+  const [draftClose, setDraftClose] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<'personal' | 'ai' | 'data'>(
+    'personal',
+  );
+  const [searchOpen, setSearchOpen] = useState(false);
+  const globalSearchRef = useRef<HTMLInputElement>(null);
+  const saveVersionRef = useRef(0);
+  const [globalQuery, setGlobalQuery] = useState('');
+  const [undoDelete, setUndoDelete] = useState('');
+  const [savedAt, setSavedAt] = useState('');
+  const [backupAt, setBackupAt] = useState('');
+  const [readingSide, setReadingSide] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const chatAbort = useRef<AbortController | null>(null);
+  const [liveReply, setLiveReply] = useState<{
+    course: string;
+    session: string;
+    message: Message;
+  } | null>(null);
+  const [reviewUndo, setReviewUndo] = useState<{
+    note: Note;
+    index: number;
+    correct: number;
+    answer: string;
+  } | null>(null);
   const [reading, setReading] = useState<Workspace['reading']>();
   const [trash, setTrash] = useState<TrashEntry[]>([]);
   const [dataBusy, setDataBusy] = useState(false);
@@ -338,12 +367,11 @@ export default function Home() {
   const [reviewOnly, setReviewOnly] = useState(false),
     [selectedNoteId, setSelectedNoteId] = useState(''),
     [editingNote, setEditingNote] = useState(false);
-  const [draftNote, setDraftNote] = useState<Note | null>(null),
-    [draftOrigin, setDraftOrigin] = useState<{
-      course: string;
-      session: string;
-      index: number;
-    } | null>(null);
+  const [draftOrigin, setDraftOrigin] = useState<{
+    course: string;
+    session: string;
+    index: number;
+  } | null>(null);
   const [source, setSource] = useState<Evidence | null>(null);
   const [reviewQueue, setReviewQueue] = useState<string[] | null>(null),
     [reviewIndex, setReviewIndex] = useState(0),
@@ -417,6 +445,96 @@ export default function Home() {
     trash,
     reading,
   };
+  useEffect(() => {
+    if (searchOpen) {
+      const id = requestAnimationFrame(() => globalSearchRef.current?.focus());
+      return () => cancelAnimationFrame(id);
+    }
+  }, [searchOpen]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        e.key.toLowerCase() === 'k' &&
+        !document.querySelector('dialog[open]')
+      ) {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    queueMicrotask(() =>
+      setBackupAt(localStorage.getItem('course-companion-last-backup') || ''),
+    );
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+  useEffect(() => {
+    if (!isSending) return;
+    const start = Date.now();
+    queueMicrotask(() => setElapsed(0));
+    const timer = setInterval(
+      () => setElapsed(Math.floor((Date.now() - start) / 1000)),
+      1000,
+    );
+    return () => clearInterval(timer);
+  }, [isSending]);
+  useEffect(() => () => chatAbort.current?.abort(), []);
+  function openSettings(tab: 'personal' | 'ai' | 'data') {
+    setSettingsTab(tab);
+    setShowSettings(true);
+    setMobileNavOpen(false);
+  }
+  function undoDeletion() {
+    try {
+      applyState(restoreEntry(workspaceState, undoDelete));
+      setUndoDelete('');
+      setToast('已撤销删除');
+    } catch (e) {
+      setToast(e instanceof Error ? e.message : '恢复失败，请查看回收站');
+    }
+  }
+  function openSearchHit(hit: SearchHit) {
+    setSearchOpen(false);
+    go(hit.view, {
+      course: hit.courseId,
+      note: hit.note,
+      file: hit.file,
+      session: hit.session,
+    });
+    if (hit.task) {
+      setTaskQuery('');
+      setExpandedTask(hit.task);
+      setTimeout(
+        () =>
+          document
+            .getElementById(`task-${hit.task}`)
+            ?.scrollIntoView({ block: 'center' }),
+        100,
+      );
+    }
+  }
+  function undoReview() {
+    if (!reviewUndo) return;
+    const old = reviewUndo.note;
+    setNotes((current) =>
+      current.map((n) =>
+        n.id === old.id
+          ? {
+              ...n,
+              reviewAt: old.reviewAt,
+              reviewCount: old.reviewCount,
+              reviewHistory: old.reviewHistory,
+              mastery: old.mastery,
+            }
+          : n,
+      ),
+    );
+    setReviewIndex(reviewUndo.index);
+    setReviewCorrect(reviewUndo.correct);
+    setReviewAnswer(reviewUndo.answer);
+    setReviewRevealed(true);
+    setReviewUndo(null);
+  }
   async function manageBackup(backup?: Backup) {
     if (dataLock.current) throw new Error('另一项数据操作尚未完成');
     if (syncBlocked.current)
@@ -483,6 +601,9 @@ export default function Home() {
           '课伴完整备份-' + localDate() + '.kbbackup.json',
           'application/json',
         );
+        const now = new Date().toLocaleString();
+        setBackupAt(now);
+        localStorage.setItem('course-companion-last-backup', now);
         setToast('完整备份已下载，包含附件');
       }
       setSyncStatus('saved');
@@ -545,7 +666,7 @@ export default function Home() {
         }
         setSyncStatus('offline');
         setSyncError(
-          '无法连接云端，正在使用本机副本。请先下载本机数据副本，再刷新重连。',
+          '无法连接本机服务，正在使用浏览器暂存副本。请先下载本机数据副本，再刷新重连。',
         );
       }
       if (!cancelled) setHydrated(true);
@@ -576,6 +697,8 @@ export default function Home() {
       );
     }
     if (syncBlocked.current || dataLock.current) return;
+    const saveVersion = ++saveVersionRef.current;
+    queueMicrotask(() => setSyncStatus('saving'));
     const timer = setTimeout(() => {
       setSyncStatus('saving');
       saveQueue.current = saveQueue.current.then(async () => {
@@ -596,7 +719,8 @@ export default function Home() {
             );
           }
           revisionRef.current = data.revision ?? revisionRef.current;
-          setSyncStatus('saved');
+          if (saveVersion === saveVersionRef.current) setSyncStatus('saved');
+          setSavedAt(new Date().toLocaleTimeString());
           setSyncError('');
         } catch (error) {
           setSyncStatus('offline');
@@ -922,10 +1046,9 @@ export default function Home() {
   }
   function removeNote() {
     if (!pendingNoteDelete) return;
-    setTrash((current) => [
-      recycleEntry(workspaceState, 'note', pendingNoteDelete.id),
-      ...current,
-    ]);
+    const entry = recycleEntry(workspaceState, 'note', pendingNoteDelete.id);
+    setUndoDelete(entry.id);
+    setTrash((current) => [entry, ...current]);
     removeNotes(new Set([pendingNoteDelete.id]));
     setPendingNoteDelete(null);
     history.replaceState(
@@ -937,10 +1060,13 @@ export default function Home() {
   }
   function removeCourse() {
     if (!pendingCourseDelete) return;
-    setTrash((current) => [
-      recycleEntry(workspaceState, 'course', pendingCourseDelete.id),
-      ...current,
-    ]);
+    const entry = recycleEntry(
+      workspaceState,
+      'course',
+      pendingCourseDelete.id,
+    );
+    setUndoDelete(entry.id);
+    setTrash((current) => [entry, ...current]);
     const removed = pendingCourseDelete;
     const remaining = courses.filter((course) => course.id !== removed.id);
     const ids = new Set(
@@ -1262,10 +1388,13 @@ export default function Home() {
   async function submitQuestion(event?: { preventDefault(): void }) {
     event?.preventDefault();
     const trimmed = question.trim();
-    if (!trimmed || isSending) return;
+    if (!trimmed || chatAbort.current || !activeCourse.id) return;
+    const controller = new AbortController();
+    chatAbort.current = controller;
     const courseId = activeCourse.id,
       sessionId = activeSession?.id ?? crypto.randomUUID(),
-      historyMessages = activeSession?.messages ?? [];
+      previous = activeSession?.messages ?? [];
+    const user: Message = { role: 'user', text: trimmed };
     if (!activeSession)
       updateCourse(courseId, (c) => ({
         ...c,
@@ -1273,7 +1402,7 @@ export default function Home() {
           {
             id: sessionId,
             title: shortTitle(trimmed),
-            messages: [{ role: 'user', text: trimmed }],
+            messages: [user],
             updatedAt: new Date().toISOString(),
           },
           ...c.sessions,
@@ -1282,55 +1411,103 @@ export default function Home() {
     else
       updateSession(courseId, sessionId, (s) => ({
         ...s,
-        title: s.title === '新学习对话' ? shortTitle(trimmed) : s.title,
-        messages: [...s.messages, { role: 'user', text: trimmed }],
+        messages: [...s.messages, user],
         updatedAt: new Date().toISOString(),
       }));
     setActiveSessionId(sessionId);
     setQuestion('');
-    setIsSending(true);
     setChatError('');
+    setIsSending(true);
+    let received: ApiData | undefined;
+    const append = (incomplete: boolean) => {
+      if (received?.answer)
+        updateSession(courseId, sessionId, (s) => ({
+          ...s,
+          messages: [
+            ...s.messages,
+            {
+              role: 'assistant',
+              text: received!.answer!,
+              evidence: received!.evidence,
+              retrieved: received!.retrieved,
+              scope: received!.scope,
+              incomplete,
+            },
+          ],
+          updatedAt: new Date().toISOString(),
+        }));
+    };
     try {
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
+          stream: true,
           question: trimmed,
-          history: historyMessages.map(({ role, text }) => ({
-            role,
-            content: text,
-          })),
+          history: previous
+            .filter((m) => !m.incomplete)
+            .map((m) => ({ role: m.role, content: m.text })),
           course: activeCourse.name,
           model,
           contexts: contextMaterials,
         }),
       });
-      const data = (await response.json()) as ApiData;
-      if (!response.ok || !data.answer)
+      if (!response.ok) {
+        const data = (await response.json()) as ApiData;
         throw new Error(data.error || '回答失败');
-      updateSession(courseId, sessionId, (s) => ({
-        ...s,
-        messages: [
-          ...s.messages,
-          {
-            role: 'assistant',
-            text: data.answer!,
-            evidence: data.evidence,
-            retrieved: data.retrieved,
-            scope: data.scope,
-          },
-        ],
-        updatedAt: new Date().toISOString(),
-      }));
+      }
+      if (
+        response.headers
+          .get('content-type')
+          ?.includes('application/x-ndjson') &&
+        response.body
+      ) {
+        let done = false;
+        for await (const line of readLines(response.body)) {
+          if (controller.signal.aborted)
+            throw new DOMException('Stopped', 'AbortError');
+          if (!line.trim()) continue;
+          const data = JSON.parse(line) as ApiData & { type: string };
+          if (data.type === 'error') throw new Error(data.error || '回答中断');
+          received = data;
+          if (data.type === 'done') done = true;
+          setLiveReply({
+            course: courseId,
+            session: sessionId,
+            message: {
+              role: 'assistant',
+              text: data.answer ?? '',
+              evidence: data.evidence,
+              scope: data.scope,
+            },
+          });
+        }
+        if (!done) throw new Error('回答中断，请重试');
+      } else received = (await response.json()) as ApiData;
+      if (controller.signal.aborted)
+        throw new DOMException('Stopped', 'AbortError');
+      if (!received?.answer) throw new Error('没有收到回答，请重试');
+      append(false);
     } catch (error) {
-      setChatError(error instanceof Error ? error.message : '连接失败');
-      setQuestion(trimmed);
-      updateSession(courseId, sessionId, (s) => ({
-        ...s,
-        messages: s.messages.slice(0, -1),
-      }));
+      append(true);
+      setChatError(
+        controller.signal.aborted
+          ? '已停止生成；已有内容标为未完成。'
+          : error instanceof Error
+            ? error.message
+            : '连接失败',
+      );
+      setQuestion((current) => current || trimmed);
+      if (!received?.answer)
+        updateSession(courseId, sessionId, (s) => ({
+          ...s,
+          messages: s.messages.slice(0, -1),
+        }));
     } finally {
+      setLiveReply(null);
       setIsSending(false);
+      chatAbort.current = null;
     }
   }
   function startNote(message?: Message, index?: number) {
@@ -1389,9 +1566,12 @@ export default function Home() {
           i === draftOrigin.index ? { ...m, saved: true } : m,
         ),
       }));
-    setDraftNote(null);
-    setToast('笔记已保存，并加入今日复习');
-    go('knowledge', { note: draftNote.id });
+    discardDraft(draftNote.id);
+    setToast(
+      draftNote.reviewAt ? '笔记已保存，并加入复习' : '笔记已保存，未加入复习',
+    );
+    if (!(activeView === 'materials' && readingSide))
+      go('knowledge', { note: draftNote.id });
   }
   function exportNotes() {
     download(
@@ -1405,6 +1585,7 @@ export default function Home() {
     );
   }
   function startReview(ids = dueNotes.map((n) => n.id)) {
+    setReviewUndo(null);
     setReviewQueue(ids);
     setReviewIndex(0);
     setReviewCorrect(0);
@@ -1415,6 +1596,12 @@ export default function Home() {
   function gradeReview(rating: 'again' | 'hard' | 'good') {
     const correct = rating === 'good';
     if (!reviewNote) return;
+    setReviewUndo({
+      note: reviewNote,
+      index: reviewIndex,
+      correct: reviewCorrect,
+      answer: reviewAnswer,
+    });
     const patch = scheduleReview(reviewNote, correct);
     if (rating === 'hard') patch.reviewCount = reviewNote.reviewCount ?? 0;
     setNotes((current) =>
@@ -1636,7 +1823,7 @@ export default function Home() {
               <ChevronRight size={16} />
             </button>
           </div>
-          <div className="review-callout">
+          <div className={`review-callout ${dueNotes.length ? '' : 'no-due'}`}>
             <h2>
               <CalendarDays size={21} />
               {dueNotes.length
@@ -2090,11 +2277,16 @@ export default function Home() {
               </div>
             )}
           </section>
-          <section className="panel material-reader">
+          <section
+            className={`panel material-reader ${readingSide ? 'with-reading-notes' : ''}`}
+          >
             {currentMaterial ? (
               <>
                 <div className="panel-heading">
                   <h2>{currentMaterial.name}</h2>
+                  <button onClick={() => setReadingSide(!readingSide)}>
+                    {readingSide ? '关闭并排笔记' : '并排记笔记'}
+                  </button>
                   <div className="actions">
                     <button
                       onClick={() => {
@@ -2182,6 +2374,77 @@ export default function Home() {
                   <div className="empty">
                     <p>没有可读取正文。扫描件需要先转为含文字的 PDF。</p>
                   </div>
+                )}
+                {readingSide && (
+                  <aside className="reading-notes">
+                    <h3>阅读笔记</h3>
+                    {draftNote ? (
+                      <form className="form-stack" onSubmit={saveDraft}>
+                        <label>
+                          笔记标题
+                          <input
+                            required
+                            value={draftNote.title}
+                            onChange={(e) =>
+                              setDraftNote({
+                                ...draftNote,
+                                title: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          笔记正文
+                          <textarea
+                            aria-label="笔记正文"
+                            required
+                            rows={12}
+                            value={draftNote.text}
+                            onChange={(e) =>
+                              setDraftNote({
+                                ...draftNote,
+                                text: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="check-label">
+                          <input
+                            type="checkbox"
+                            checked={!!draftNote.reviewAt}
+                            onChange={(e) =>
+                              setDraftNote({
+                                ...draftNote,
+                                reviewAt: e.target.checked
+                                  ? localDate()
+                                  : undefined,
+                              })
+                            }
+                          />
+                          加入复习
+                        </label>
+                        <button className="primary" type="submit">
+                          保存笔记
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setDraftClose(true)}
+                        >
+                          关闭草稿
+                        </button>
+                        <small>
+                          草稿自动暂存；选中原文可保存带引用的笔记。
+                        </small>
+                      </form>
+                    ) : (
+                      <>
+                        <button onClick={() => startNote()}>
+                          新建阅读笔记
+                        </button>
+                        {noteRows(courseNotes.slice(0, 8))}
+                      </>
+                    )}
+                  </aside>
                 )}
                 <PassageReader
                   key={activeCourse.id + ':' + materialKey(currentMaterial)}
@@ -2379,11 +2642,20 @@ export default function Home() {
                 </div>
               </div>
             )}
-            {messages.map((message, index) => (
+            {[
+              ...messages,
+              ...(liveReply?.course === activeCourse.id &&
+              liveReply.session === activeSessionId
+                ? [liveReply.message]
+                : []),
+            ].map((message, index) => (
               <article className={`message ${message.role}`} key={index}>
                 <div className="message-label">
                   {message.role === 'assistant' ? '课伴' : preferences.userName}
                 </div>
+                {message.incomplete && (
+                  <p className="notice">未完成的回答 · 请重试或核对后使用</p>
+                )}
                 <Markdown text={message.text} />
                 <div className="actions">
                   <button
@@ -2472,7 +2744,15 @@ export default function Home() {
             {isSending && (
               <output className="notice">
                 <LoaderCircle className="spin" size={16} />
-                正在匹配原文并组织回答…
+                {liveReply ? '正在生成回答' : '正在连接并查找原文'} · 已等待{' '}
+                {elapsed} 秒
+                {elapsed >= 15 && <span>耗时较长，你可以停止后重试。</span>}
+                <button
+                  type="button"
+                  onClick={() => chatAbort.current?.abort()}
+                >
+                  停止生成
+                </button>
               </output>
             )}
             <div ref={chatEndRef} />
@@ -2480,6 +2760,12 @@ export default function Home() {
           {chatError && (
             <p className="error" role="alert">
               {chatError} 问题已保留在输入框。
+              <button
+                disabled={isSending || !question.trim()}
+                onClick={() => void submitQuestion()}
+              >
+                重新发送
+              </button>
             </p>
           )}
           <form className="composer" onSubmit={submitQuestion}>
@@ -3150,7 +3436,7 @@ export default function Home() {
             {sortedTasks.length ? (
               <div className="task-list">
                 {sortedTasks.map((t) => (
-                  <div key={t.id} className="task-item">
+                  <div key={t.id} id={`task-${t.id}`} className="task-item">
                     <div className={`task-row ${t.status}`}>
                       <label className="check-label">
                         <input
@@ -3279,6 +3565,7 @@ export default function Home() {
             )}
           </div>
         </section>
+        {reviewUndo && <button onClick={undoReview}>撤销上次评分</button>}
         {reviewQueue === null ? (
           <section className="panel review-card">
             <h2>{dueNotes.length} 条笔记已到复习日期</h2>
@@ -3351,16 +3638,16 @@ export default function Home() {
                 </p>
                 <div className="actions">
                   <button onClick={() => gradeReview('again')}>
-                    没答对 · 明天再练
+                    没答对 · {scheduleReview(reviewNote, false).reviewAt} 再练
                   </button>
                   <button onClick={() => gradeReview('hard')}>
-                    有点吃力 · 明天巩固
+                    有点吃力 · {scheduleReview(reviewNote, false).reviewAt} 巩固
                   </button>
                   <button
                     className="primary"
                     onClick={() => gradeReview('good')}
                   >
-                    答对了 · 下一条
+                    答对了 · {scheduleReview(reviewNote, true).reviewAt} 再练
                     <Check size={17} />
                   </button>
                 </div>
@@ -3407,6 +3694,13 @@ export default function Home() {
         <button className="brand" onClick={() => go('home')}>
           <GraduationCap size={27} />
           <strong>{preferences.brandName}</strong>
+        </button>
+        <button
+          className="global-search-trigger"
+          onClick={() => setSearchOpen(true)}
+        >
+          <Search size={17} />
+          搜索全部内容 <kbd>Ctrl K</kbd>
         </button>
         <nav aria-label="主导航">
           <button
@@ -3476,12 +3770,22 @@ export default function Home() {
             <Settings2 size={18} />
             设置与备份
           </button>
-          <small>
+          <button onClick={() => openSettings('data')}>
+            <Trash2 size={18} />
+            回收站（{trash.length}）
+          </button>
+          <small
+            title={
+              savedAt
+                ? `最近保存：${savedAt}`
+                : '学习数据保存在本机服务中，不代表云端备份'
+            }
+          >
             {syncStatus === 'saving'
               ? '正在保存…'
               : syncStatus === 'offline'
-                ? '云端未同步'
-                : '已同步'}
+                ? '保存失败'
+                : `已保存到本机${savedAt ? ' · ' + savedAt : ''}`}
           </small>
         </div>
       </aside>
@@ -3606,6 +3910,67 @@ export default function Home() {
           )}
         </div>
       </section>
+      {!draftNote && drafts.length > 0 && (
+        <aside className="draft-recovery" aria-label="未完成草稿">
+          <details>
+            <summary>未完成草稿（{drafts.length}）</summary>
+            {drafts.map((n) => (
+              <button
+                key={n.id}
+                onClick={() => {
+                  setDraftOrigin(null);
+                  setDraftNote(n);
+                  setReadingSide(false);
+                }}
+              >
+                {n.course} · {n.title || '未命名草稿'} · 继续编辑
+              </button>
+            ))}
+          </details>
+        </aside>
+      )}
+      {draftError && (
+        <p className="draft-warning" role="alert">
+          {draftError}
+        </p>
+      )}
+      {searchOpen && (
+        <Modal
+          labelId="global-search-title"
+          wide
+          onClose={() => setSearchOpen(false)}
+        >
+          <div className="modal-heading">
+            <h2 id="global-search-title">搜索全部内容</h2>
+            <button onClick={() => setSearchOpen(false)}>关闭搜索</button>
+          </div>
+          <input
+            aria-label="搜索全部内容"
+            ref={globalSearchRef}
+            placeholder="搜索课程、笔记、资料、任务或对话"
+            value={globalQuery}
+            onChange={(e) => setGlobalQuery(e.target.value)}
+          />
+          <div className="search-results">
+            {searchWorkspace(workspaceState, globalQuery).map((hit) => (
+              <button key={hit.key} onClick={() => openSearchHit(hit)}>
+                <small>
+                  {hit.kind} · {hit.course}
+                </small>
+                <strong>{hit.title}</strong>
+                <span>{hit.excerpt}</span>
+              </button>
+            ))}
+            {globalQuery &&
+              !searchWorkspace(workspaceState, globalQuery).length && (
+                <p>没有找到相关内容，试试更短的关键词。</p>
+              )}
+            {!globalQuery && (
+              <p>输入关键词即可搜索；只包含已有内容与成功解析的资料正文。</p>
+            )}
+          </div>
+        </Modal>
+      )}
       {newCourseOpen && (
         <Modal
           labelId="new-course-title"
@@ -3638,14 +4003,14 @@ export default function Home() {
           </form>
         </Modal>
       )}
-      {draftNote && (
-        <Modal labelId="draft-title" wide onClose={() => setDraftNote(null)}>
+      {draftNote && !(activeView === 'materials' && readingSide) && (
+        <Modal labelId="draft-title" wide onClose={() => setDraftClose(true)}>
           <div className="modal-heading">
             <h2 id="draft-title">整理成一条知识笔记</h2>
             <button
               className="icon-button"
               aria-label="关闭草稿"
-              onClick={() => setDraftNote(null)}
+              onClick={() => setDraftClose(true)}
             >
               <X size={20} />
             </button>
@@ -3717,6 +4082,7 @@ export default function Home() {
             <label>
               笔记正文
               <textarea
+                aria-label="笔记正文"
                 required
                 rows={9}
                 value={draftNote.text}
@@ -3734,12 +4100,56 @@ export default function Home() {
                 }
               />
             </label>
-            <small className="muted">保留引用来源，保存后加入今日复习。</small>
+            <label className="check-label">
+              <input
+                type="checkbox"
+                checked={!!draftNote.reviewAt}
+                onChange={(e) =>
+                  setDraftNote({
+                    ...draftNote,
+                    reviewAt: e.target.checked ? localDate() : undefined,
+                  })
+                }
+              />
+              加入复习
+            </label>
+            <small className="muted">
+              草稿自动暂存在当前浏览器；保存时保留引用来源。
+            </small>
             <button className="primary" type="submit">
               <Save size={17} />
               保存笔记
             </button>
           </form>
+        </Modal>
+      )}
+      {draftClose && draftNote && (
+        <Modal labelId="draft-close-title" onClose={() => setDraftClose(false)}>
+          <h2 id="draft-close-title">如何处理这份草稿？</h2>
+          <p>保留后可从“未完成草稿”继续编辑。</p>
+          {draftError && <p role="alert">{draftError}</p>}
+          <div className="button-row">
+            <button onClick={() => setDraftClose(false)}>继续编辑</button>
+            <button
+              disabled={!!draftError}
+              onClick={() => {
+                setDraftNote(null);
+                setDraftClose(false);
+                setToast('草稿已保留');
+              }}
+            >
+              保留草稿
+            </button>
+            <button
+              className="danger"
+              onClick={() => {
+                discardDraft(draftNote.id);
+                setDraftClose(false);
+              }}
+            >
+              放弃修改
+            </button>
+          </div>
         </Modal>
       )}
       {source && (
@@ -3757,7 +4167,9 @@ export default function Home() {
             </button>
           </div>
           <p className="muted">{source.section} · 提取原文，供人工核对</p>
-          <blockquote className="source-quote">{source.quote}</blockquote>
+          <blockquote className="source-quote">
+            <mark>{source.quote}</mark>
+          </blockquote>
           {source.fileId && (
             <a
               className="button primary"
@@ -4000,73 +4412,119 @@ export default function Home() {
               <X size={20} />
             </button>
           </div>
+          <fieldset className="settings-tabs" aria-label="设置分类">
+            {(
+              [
+                ['personal', '个人偏好'],
+                ['ai', 'AI 服务'],
+                ['data', '数据管理'],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                aria-pressed={settingsTab === id}
+                onClick={() => setSettingsTab(id)}
+              >
+                {label}
+              </button>
+            ))}
+          </fieldset>
           <fieldset className="form-stack settings-fields" disabled={dataBusy}>
-            <label>
-              空间名称
-              <input
-                value={preferences.brandName}
-                maxLength={12}
-                onChange={(e) =>
-                  setPreferences({ ...preferences, brandName: e.target.value })
-                }
+            {settingsTab === 'personal' && (
+              <>
+                <label>
+                  空间名称
+                  <input
+                    value={preferences.brandName}
+                    maxLength={12}
+                    onChange={(e) =>
+                      setPreferences({
+                        ...preferences,
+                        brandName: e.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  你的称呼
+                  <input
+                    value={preferences.userName}
+                    maxLength={16}
+                    onChange={(e) =>
+                      setPreferences({
+                        ...preferences,
+                        userName: e.target.value,
+                      })
+                    }
+                  />
+                </label>
+                <label>
+                  当前学期
+                  <input
+                    value={preferences.semester}
+                    onChange={(e) =>
+                      setPreferences({
+                        ...preferences,
+                        semester: e.target.value,
+                      })
+                    }
+                  />
+                </label>
+              </>
+            )}
+            {settingsTab === 'ai' && (
+              <AISettings
+                onSaved={() => {
+                  setModel('');
+                  setToast('AI 设置已保存，后续请求使用新配置');
+                }}
               />
-            </label>
-            <label>
-              你的称呼
-              <input
-                value={preferences.userName}
-                maxLength={16}
-                onChange={(e) =>
-                  setPreferences({ ...preferences, userName: e.target.value })
-                }
-              />
-            </label>
-            <label>
-              当前学期
-              <input
-                value={preferences.semester}
-                onChange={(e) =>
-                  setPreferences({ ...preferences, semester: e.target.value })
-                }
-              />
-            </label>
-            <label>
-              默认模型
-              <small>
-                留空使用服务端配置；填写模型 ID 时须与已接入服务一致。
-              </small>
-              <input
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                list="model-options"
-                placeholder="填写服务商实际支持的模型 ID"
-              />
-              <datalist id="model-options">
-                {MODELS.map(([id, name]) => (
-                  <option key={id} value={id}>
-                    {name}
-                  </option>
-                ))}
-              </datalist>
-            </label>
-            <DataManagement
-              trash={trash}
-              run={manageBackup}
-              restore={(id) => {
-                applyState(restoreEntry(workspaceState, id));
-                setToast('已从回收站恢复');
-              }}
-              remove={(id) =>
-                setTrash((current) => current.filter((item) => item.id !== id))
-              }
-            />
+            )}
+            {settingsTab === 'data' && (
+              <>
+                <p className="muted">
+                  最近下载完整备份：{backupAt || '本浏览器暂无记录'}
+                  。本机保存不等于备份。
+                </p>
+                <DataManagement
+                  trash={trash}
+                  run={manageBackup}
+                  restore={(id) => {
+                    applyState(restoreEntry(workspaceState, id));
+                    setUndoDelete('');
+                    setToast('已从回收站恢复');
+                  }}
+                  remove={(id) =>
+                    setTrash((current) =>
+                      current.filter((item) => item.id !== id),
+                    )
+                  }
+                />
+              </>
+            )}
             <button className="primary" onClick={() => setShowSettings(false)}>
               完成
             </button>
           </fieldset>
         </Modal>
       )}
-      {toast && <output className="toast">{toast}</output>}
+      {(toast || (undoDelete && trash.some((t) => t.id === undoDelete))) && (
+        <output className="toast">
+          {toast || '已移入回收站'}
+          {undoDelete && trash.some((t) => t.id === undoDelete) && (
+            <>
+              <button onClick={undoDeletion}>撤销删除</button>
+              <button onClick={() => openSettings('data')}>查看回收站</button>
+              <button
+                aria-label="关闭删除提示"
+                onClick={() => setUndoDelete('')}
+              >
+                ×
+              </button>
+            </>
+          )}
+        </output>
+      )}
     </main>
   );
 }

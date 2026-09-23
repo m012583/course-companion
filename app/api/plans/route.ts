@@ -1,3 +1,4 @@
+import { readAIConfig } from '@/lib/ai-settings';
 type PlanCourse = { name: string; materialCount: number; noteCount: number };
 type PlanTask = { title: string; kind: string; date: string | null };
 
@@ -21,10 +22,14 @@ export async function POST(request: Request) {
     typeof body.upcomingCount !== 'number'
   )
     return Response.json({ error: '无效的规划数据' }, { status: 400 });
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  const config = await readAIConfig();
+  const apiKey = config.apiKey;
   if (apiKey && !/^[\x21-\x7E]+$/.test(apiKey))
     return Response.json(
-      { error: 'AI 密钥格式不正确，请仅填写服务平台生成的密钥，不要包含说明文字或空格。' },
+      {
+        error:
+          'AI 密钥格式不正确，请仅填写服务平台生成的密钥，不要包含说明文字或空格。',
+      },
       { status: 503 },
     );
   if (!apiKey)
@@ -42,7 +47,7 @@ export async function POST(request: Request) {
   const tasks = (Array.isArray(body.tasks) ? body.tasks : []) as PlanTask[];
   try {
     const response = await fetch(
-      `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
+      `${config.baseUrl.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: {
@@ -50,12 +55,13 @@ export async function POST(request: Request) {
           Authorization: `Bearer ${apiKey}`,
           'User-Agent': 'course-knowledge-base/0.2',
         },
-        signal: AbortSignal.timeout(90000),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(90000)]),
+        redirect: 'manual',
         body: JSON.stringify({
           model:
             typeof body.model === 'string' && body.model
               ? body.model
-              : process.env.OPENAI_MODEL || 'deepseek-v4-flash',
+              : config.model,
           temperature: 0.3,
           max_tokens: 1600,
           messages: [
@@ -93,20 +99,15 @@ export async function POST(request: Request) {
       );
     const raw = data?.choices?.[0]?.message?.content;
     if (!raw)
-      return Response.json(
-        { error: '模型没有返回建议。' },
-        { status: 502 },
-      );
+      return Response.json({ error: '模型没有返回建议。' }, { status: 502 });
     const parsed = JSON.parse(raw) as { suggestions?: unknown };
-    const suggestions = (Array.isArray(parsed?.suggestions)
-      ? parsed.suggestions
-      : []
+    const suggestions = (
+      Array.isArray(parsed?.suggestions) ? parsed.suggestions : []
     )
       .map((s) => {
         const item = s as { title?: unknown; reason?: unknown };
         return {
-          title:
-            typeof item.title === 'string' ? item.title.slice(0, 40) : '',
+          title: typeof item.title === 'string' ? item.title.slice(0, 40) : '',
           reason:
             typeof item.reason === 'string' ? item.reason.slice(0, 300) : '',
         };
@@ -127,7 +128,7 @@ export async function POST(request: Request) {
             : error instanceof SyntaxError
               ? '模型返回的内容无法解析，请重试。'
               : error instanceof Error
-                ? error.message
+                ? '服务请求失败，请检查连接后重试。'
                 : '生成失败。',
       },
       { status: 502 },

@@ -1,5 +1,6 @@
 import type { Material, Note, Evidence } from './knowledge';
 export type Message = {
+  incomplete?: boolean;
   role: 'user' | 'assistant';
   text: string;
   sources?: string[];

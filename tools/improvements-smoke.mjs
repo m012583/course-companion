@@ -109,9 +109,7 @@ try {
   await page.getByRole('button', { name: '复习这条', exact: true }).click();
   await page.getByLabel('你的回答', { exact: true }).fill('可逆方阵满秩');
   await page.getByRole('button', { name: '查看笔记解析', exact: true }).click();
-  await page
-    .getByRole('button', { name: '有点吃力 · 明天巩固', exact: true })
-    .click();
+  await page.getByRole('button', { name: /^有点吃力 · .* 巩固$/ }).click();
   await settled();
   saved = (await getState()).state;
   assert.equal(
@@ -140,6 +138,7 @@ try {
   await page.getByRole('button', { name: '确认删除笔记', exact: true }).click();
   await settled();
   await page.getByRole('button', { name: '个人设置', exact: true }).click();
+  await page.getByRole('button', { name: '数据管理', exact: true }).click();
   await page
     .locator('.trash-row')
     .filter({ hasText: '回收站测试笔记' })
@@ -162,6 +161,7 @@ try {
   await settled();
   assert.equal((await getState()).state.courses.length, 0);
   await page.getByRole('button', { name: '个人设置', exact: true }).click();
+  await page.getByRole('button', { name: '数据管理', exact: true }).click();
   await page
     .locator('.trash-row')
     .getByRole('button', { name: '恢复', exact: true })
@@ -206,6 +206,7 @@ try {
     fullPage: true,
   });
   await page.getByRole('button', { name: '个人设置', exact: true }).click();
+  await page.getByRole('button', { name: '数据管理', exact: true }).click();
   await page.setViewportSize({ width: 430, height: 900 });
   await page.screenshot({
     path: 'test-results/improvements-settings-mobile.png',

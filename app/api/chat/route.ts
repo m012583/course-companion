@@ -1,3 +1,5 @@
+import { readAIConfig, providerError } from '@/lib/ai-settings';
+import { readLines } from '@/lib/streams';
 import { retrieve, type Material } from '@/lib/knowledge';
 
 export async function POST(request: Request) {
@@ -8,6 +10,7 @@ export async function POST(request: Request) {
     return new Response('Forbidden', { status: 403 });
   try {
     const body = (await request.json().catch(() => null)) as {
+      stream?: boolean;
       question?: unknown;
       contexts?: unknown;
       history?: unknown;
@@ -56,10 +59,14 @@ export async function POST(request: Request) {
       [...history].reverse().find((item) => item.role === 'user')?.content ??
       '';
     const evidence = retrieve(`${question} ${previousQuestion}`, materials);
-    const apiKey = process.env.OPENAI_API_KEY?.trim();
+    const config = await readAIConfig();
+    const apiKey = config.apiKey;
     if (apiKey && !/^[\x21-\x7E]+$/.test(apiKey))
       return Response.json(
-        { error: 'AI 密钥格式不正确，请仅填写服务平台生成的密钥，不要包含说明文字或空格。' },
+        {
+          error:
+            'AI 密钥格式不正确，请仅填写服务平台生成的密钥，不要包含说明文字或空格。',
+        },
         { status: 503 },
       );
     if (!apiKey)
@@ -71,11 +78,15 @@ export async function POST(request: Request) {
         { status: 503 },
       );
     const model =
-      typeof body.model === 'string' && body.model
-        ? body.model
-        : process.env.OPENAI_MODEL || 'gpt-4o-mini';
+      typeof body.model === 'string' && body.model ? body.model : config.model;
+    const controller = new AbortController();
+    const signal = AbortSignal.any([
+      request.signal,
+      controller.signal,
+      AbortSignal.timeout(90000),
+    ]);
     const response = await fetch(
-      `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
+      `${config.baseUrl.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: {
@@ -84,9 +95,11 @@ export async function POST(request: Request) {
           'User-Agent': 'course-knowledge-base/0.2',
           'x-opencode-session': `course-kb-${(typeof body.course === 'string' ? body.course : 'default').replace(/[^a-zA-Z0-9_-]/g, '-')}`,
         },
-        signal: AbortSignal.timeout(90000),
+        signal,
+        redirect: 'manual',
         body: JSON.stringify({
           model,
+          stream: body.stream === true,
           temperature: 0.2,
           messages: [
             {
@@ -99,31 +112,19 @@ export async function POST(request: Request) {
         }),
       },
     );
-    const data = (await response.json()) as {
-      error?: { message?: string };
-      choices?: Array<{ message?: { content?: string } }>;
-    };
     if (!response.ok)
       return Response.json(
-        { error: data.error?.message || 'AI 服务暂时不可用，请重试。' },
-        { status: 502 },
-      );
-    let answer = data.choices?.[0]?.message?.content?.trim();
-    if (!answer)
-      return Response.json(
-        { error: 'AI 没有返回回答，请重试。' },
+        { error: providerError(response.status) },
         { status: 502 },
       );
     const known = new Set(evidence.map((s) => s.id));
-    answer = answer.replace(/\[(S\d+)\]/g, (label, id) =>
-      known.has(id) ? label : '[无对应原文]',
-    );
-    const used = evidence.filter((source) =>
-      answer!.includes(`[${source.id}]`),
-    );
-    return Response.json({
-      answer,
-      evidence: used,
+    const clean = (answer: string) =>
+      answer.replace(/\[(S\d+)\]/g, (label, id) =>
+        known.has(id) ? label : '[无对应原文]',
+      );
+    const pack = (answer: string) => ({
+      answer: clean(answer),
+      evidence: evidence.filter((s) => answer.includes(`[${s.id}]`)),
       retrieved: evidence,
       scope: {
         selected: materials.length,
@@ -132,6 +133,83 @@ export async function POST(request: Request) {
       },
       sources: [],
     });
+    if (
+      body.stream &&
+      response.headers.get('content-type')?.includes('text/event-stream') &&
+      response.body
+    ) {
+      const upstream = response.body;
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(output) {
+          let answer = '',
+            finished = false;
+          const emit = (data: unknown) =>
+            output.enqueue(encoder.encode(JSON.stringify(data) + '\n'));
+          try {
+            for await (const line of readLines(upstream)) {
+              if (!line.startsWith('data:')) continue;
+              const payload = line.slice(5).trim();
+              if (payload === '[DONE]') {
+                finished = true;
+                break;
+              }
+              if (!payload) continue;
+              const event = JSON.parse(payload) as {
+                error?: unknown;
+                choices?: {
+                  delta?: { content?: string };
+                  finish_reason?: string;
+                }[];
+              };
+              if (event.error) throw new Error('stream');
+              const choice = event.choices?.[0];
+              if (choice?.delta?.content) {
+                answer += choice.delta.content;
+                emit({
+                  type: 'partial',
+                  ...pack(answer.replace(/\[S\d*$/, '')),
+                });
+              }
+            }
+            if (!finished || !answer.trim()) throw new Error('incomplete');
+            emit({ type: 'done', ...pack(answer) });
+          } catch {
+            if (!signal.aborted)
+              emit({
+                type: 'error',
+                error: '回答中断，已保留收到的内容，请重试。',
+              });
+          } finally {
+            try {
+              output.close();
+            } catch {
+              /* Client cancelled. */
+            }
+            controller.abort();
+          }
+        },
+        cancel() {
+          controller.abort();
+        },
+      });
+      return new Response(stream, {
+        headers: {
+          'Content-Type': 'application/x-ndjson; charset=utf-8',
+          'Cache-Control': 'no-store',
+        },
+      });
+    }
+    const data = (await response.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const answer = data.choices?.[0]?.message?.content?.trim();
+    if (!answer)
+      return Response.json(
+        { error: 'AI 没有返回回答，请重试。' },
+        { status: 502 },
+      );
+    return Response.json(pack(answer));
   } catch (error) {
     return Response.json(
       {

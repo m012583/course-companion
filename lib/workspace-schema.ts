@@ -82,6 +82,7 @@ const material = z.object({
     .optional(),
 });
 const message = z.object({
+  incomplete: z.boolean().optional(),
   role: z.enum(['user', 'assistant']),
   text: str,
   sources: strings.optional(),

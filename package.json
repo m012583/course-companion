@@ -18,7 +18,10 @@
     "test:storage": "node tools/test-storage.mjs",
     "test:improvements": "node tools/improvements-smoke.mjs",
     "eval:retrieval": "node tools/evaluate.mjs",
-    "eval:ai": "node tools/evaluate.mjs --live"
+    "eval:ai": "node tools/evaluate.mjs --live",
+    "test:ai-config": "node tools/test-ai-config.mjs",
+    "test:comfort:server": "node tools/test-comfort-server.mjs",
+    "test:comfort": "node tools/comfort-smoke.cjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
