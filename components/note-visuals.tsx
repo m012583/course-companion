@@ -239,9 +239,7 @@ export default function NoteVisuals({
   onOpen,
   renderText,
 }: Props) {
-  const [tab, setTab] = useState<'related' | 'concept' | 'text'>(
-      note.conceptGraph ? 'concept' : 'related',
-    ),
+  const [tab, setTab] = useState<'related' | 'concept' | 'text'>('text'),
     [inspectorOpen, setInspectorOpen] = useState(false),
     [selected, setSelected] = useState(note.id),
     [busy, setBusy] = useState(false),
@@ -715,9 +713,9 @@ export default function NoteVisuals({
       <div className="note-view-tabs" role="tablist" aria-label="笔记展示方式">
         {(
           [
-            { id: 'concept', name: '篇内概念图' },
-            { id: 'related', name: '关联笔记' },
             { id: 'text', name: '正文' },
+            { id: 'related', name: '关联笔记' },
+            { id: 'concept', name: '篇内概念图' },
           ] as const
         ).map((item) => (
           <button

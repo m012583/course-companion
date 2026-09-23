@@ -148,7 +148,7 @@ try {
   assert.ok(
     (await getState()).state.notes.some((n) => n.id === 'storage-test-note'),
   );
-  await page.getByRole('button', { name: '完成', exact: true }).click();
+  await page.getByRole('button', { name: '关闭', exact: true }).click();
   await go('view=home');
   const deleteButton = page.getByRole('button', {
     name: '删除课程 备份验收课程',

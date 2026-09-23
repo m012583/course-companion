@@ -1,4 +1,5 @@
 'use client';
+import ReadingDivider from '@/components/reading-divider';
 import AISettings from '@/components/ai-settings';
 import { useNoteDrafts } from '@/components/draft-storage';
 import { searchWorkspace, type SearchHit } from '@/lib/search';
@@ -281,6 +282,9 @@ export default function Home() {
   const [savedAt, setSavedAt] = useState('');
   const [backupAt, setBackupAt] = useState('');
   const [readingSide, setReadingSide] = useState(false);
+  const [materialListOpen, setMaterialListOpen] = useState(false);
+  const [readingRatio, setReadingRatio] = useState(58);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const chatAbort = useRef<AbortController | null>(null);
   const [liveReply, setLiveReply] = useState<{
@@ -479,6 +483,26 @@ export default function Home() {
     return () => clearInterval(timer);
   }, [isSending]);
   useEffect(() => () => chatAbort.current?.abort(), []);
+  useEffect(() => {
+    if (activeView !== 'study') return;
+    const viewport = window.visualViewport;
+    const resize = () => {
+      const height = viewport?.height ?? window.innerHeight;
+      const root = document.documentElement;
+      root.style.setProperty('--chat-height', `${height}px`);
+      root.classList.toggle('chat-short', height <= 650);
+      root.classList.toggle('chat-tiny', height <= 500);
+    };
+    resize();
+    viewport?.addEventListener('resize', resize);
+    window.addEventListener('resize', resize);
+    return () => {
+      viewport?.removeEventListener('resize', resize);
+      window.removeEventListener('resize', resize);
+      document.documentElement.style.removeProperty('--chat-height');
+      document.documentElement.classList.remove('chat-short', 'chat-tiny');
+    };
+  }, [activeView]);
   function openSettings(tab: 'personal' | 'ai' | 'data') {
     setSettingsTab(tab);
     setShowSettings(true);
@@ -822,6 +846,7 @@ export default function Home() {
       ].slice(-50);
     });
     setActiveView(view);
+    setSessionsOpen(false);
     setMobileNavOpen(false);
     setEditingNote(false);
     if (opts.course) {
@@ -2216,7 +2241,19 @@ export default function Home() {
             {uploadError}
           </p>
         )}
-        <div className="materials-layout">
+        {readingSide && (
+          <button
+            className="material-list-toggle"
+            aria-expanded={materialListOpen}
+            onClick={() => setMaterialListOpen(!materialListOpen)}
+          >
+            {materialListOpen ? '收起资料列表' : '切换资料'} ·{' '}
+            {currentMaterial?.name}
+          </button>
+        )}
+        <div
+          className={`materials-layout ${readingSide ? 'split-reading' : ''} ${materialListOpen ? 'list-open' : ''}`}
+        >
           <section className="panel list-panel">
             <div className="panel-heading">
               <h2>资料</h2>
@@ -2279,12 +2316,24 @@ export default function Home() {
           </section>
           <section
             className={`panel material-reader ${readingSide ? 'with-reading-notes' : ''}`}
+            style={
+              readingSide
+                ? {
+                    gridTemplateColumns: `minmax(0, ${readingRatio}fr) 12px minmax(0, ${100 - readingRatio}fr)`,
+                  }
+                : undefined
+            }
           >
             {currentMaterial ? (
               <>
                 <div className="panel-heading">
                   <h2>{currentMaterial.name}</h2>
-                  <button onClick={() => setReadingSide(!readingSide)}>
+                  <button
+                    onClick={() => {
+                      setReadingSide(!readingSide);
+                      setMaterialListOpen(false);
+                    }}
+                  >
                     {readingSide ? '关闭并排笔记' : '并排记笔记'}
                   </button>
                   <div className="actions">
@@ -2374,6 +2423,12 @@ export default function Home() {
                   <div className="empty">
                     <p>没有可读取正文。扫描件需要先转为含文字的 PDF。</p>
                   </div>
+                )}
+                {readingSide && (
+                  <ReadingDivider
+                    value={readingRatio}
+                    onChange={setReadingRatio}
+                  />
                 )}
                 {readingSide && (
                   <aside className="reading-notes">
@@ -2528,13 +2583,28 @@ export default function Home() {
     const messages = activeSession?.messages ?? [];
     return (
       <div className="study-layout">
-        <aside className="panel sessions">
+        <button
+          className="session-toggle"
+          aria-expanded={sessionsOpen}
+          aria-controls="session-list"
+          onClick={() => setSessionsOpen(!sessionsOpen)}
+        >
+          {sessionsOpen ? '收起对话列表' : '历史对话'} ·{' '}
+          {activeCourse.sessions.length}
+        </button>
+        <aside
+          id="session-list"
+          className={`panel sessions ${sessionsOpen ? 'is-open' : ''}`}
+        >
           <div className="panel-heading">
             <h2>对话</h2>
             <button
               className="icon-button"
               aria-label="新建对话"
-              onClick={newSession}
+              onClick={() => {
+                newSession();
+                setSessionsOpen(false);
+              }}
             >
               <Plus size={18} />
             </button>
@@ -3075,38 +3145,6 @@ export default function Home() {
                   ) : (
                     <>
                       <h2 className="note-title">{selectedNote.title}</h2>
-                      {suggestedLinks(selectedNote, notes).length > 0 && (
-                        <div className="suggested-links">
-                          <h3>可关联的笔记</h3>
-                          <small>
-                            按共同标签或同一章节推荐，确认后才建立关联。
-                          </small>
-                          {suggestedLinks(selectedNote, notes).map((item) => (
-                            <div className="button-row" key={item.note.id}>
-                              <button onClick={() => openNote(item.note)}>
-                                {item.note.title}
-                              </button>
-                              <small>{item.reason}</small>
-                              <button
-                                onClick={() =>
-                                  editNote({
-                                    relatedIds: [
-                                      ...(selectedNote.relatedIds ?? []),
-                                      item.note.id,
-                                    ],
-                                    relatedLabels: {
-                                      ...selectedNote.relatedLabels,
-                                      [item.note.id]: '相关',
-                                    },
-                                  })
-                                }
-                              >
-                                添加关联
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
                       <div className="tags">
                         <span>{selectedNote.chapter || '未分类'}</span>
                         {selectedNote.tags?.filter(Boolean).map((t) => (
@@ -3138,6 +3176,7 @@ export default function Home() {
                       />
                     </>
                   )}
+                  {evidenceList(selectedNote.sources ?? [])}
                   <details className="note-review-settings">
                     <summary>复习与掌握情况</summary>
                     <div className="review-history">
@@ -3201,7 +3240,42 @@ export default function Home() {
                       </small>
                     </div>
                   </details>
-                  {evidenceList(selectedNote.sources ?? [])}
+                  {suggestedLinks(selectedNote, notes).length > 0 && (
+                    <details className="suggested-links">
+                      <summary>
+                        可关联的笔记（
+                        {suggestedLinks(selectedNote, notes).length}）
+                      </summary>
+                      <small>
+                        按共同标签或同一章节推荐，确认后才建立关联。
+                      </small>
+                      {suggestedLinks(selectedNote, notes).map((item) => (
+                        <div className="suggested-link-card" key={item.note.id}>
+                          <button onClick={() => openNote(item.note)}>
+                            {item.note.title}
+                          </button>
+                          <small>{item.reason}</small>
+                          <button
+                            onClick={() =>
+                              editNote({
+                                relatedIds: [
+                                  ...(selectedNote.relatedIds ?? []),
+                                  item.note.id,
+                                ],
+                                relatedLabels: {
+                                  ...selectedNote.relatedLabels,
+                                  [item.note.id]: '相关',
+                                },
+                              })
+                            }
+                          >
+                            添加关联
+                          </button>
+                        </div>
+                      ))}
+                    </details>
+                  )}
+
                   {selectedNote.sessionId && (
                     <button
                       className="text-button"
@@ -3317,255 +3391,19 @@ export default function Home() {
             </p>
           </div>
         </div>
-        <section className="panel plan-panel">
-          <div className="plan-head">
-            <div>
-              <p className="eyebrow">自主学习</p>
-              <h2>学习规划</h2>
-            </div>
+        {reviewQueue !== null && (
+          <div className="review-session-actions">
             <button
-              className="secondary"
-              disabled={aiLoading}
-              onClick={generatePlans}
+              onClick={() => {
+                setReviewQueue(null);
+                setReviewUndo(null);
+              }}
             >
-              {aiLoading ? '生成中…' : 'AI 生成建议'}
-              <Sparkles size={15} />
+              退出本轮复习
             </button>
+            {reviewUndo && <button onClick={undoReview}>撤销上次评分</button>}
           </div>
-          <div className="plan-suggestions">
-            {suggestions.map((s, i) => (
-              <div key={i} className={`suggestion ${s.kind}`}>
-                <span className="suggestion-icon">
-                  {s.kind === 'review' ? (
-                    <CalendarDays size={15} />
-                  ) : s.kind === 'learn' ? (
-                    <GraduationCap size={15} />
-                  ) : (
-                    <Lightbulb size={15} />
-                  )}
-                </span>
-                <span>{s.text}</span>
-              </div>
-            ))}
-            {aiSuggestions.map((s, i) => (
-              <div key={`ai-${i}`} className="suggestion ai">
-                <span className="suggestion-icon">
-                  <Sparkles size={15} />
-                </span>
-                <span>{s}</span>
-              </div>
-            ))}
-          </div>
-          <div className="plan-tasks">
-            <div className="plan-tasks-head">
-              <h3>
-                我的学习任务
-                {todoTaskCount > 0 && (
-                  <span className="count">{todoTaskCount}</span>
-                )}
-              </h3>
-              <details className="add-task">
-                <summary>添加任务</summary>
-                <form className="task-form form-stack" onSubmit={addTask}>
-                  <label>
-                    任务名称
-                    <input
-                      value={taskTitle}
-                      onChange={(e) => setTaskTitle(e.target.value)}
-                      placeholder="例如：整理第二章笔记"
-                      maxLength={100}
-                    />
-                  </label>
-                  <label>
-                    学习内容
-                    <textarea
-                      rows={3}
-                      value={taskContent}
-                      onChange={(e) => setTaskContent(e.target.value)}
-                      placeholder="记录这节课的重点、疑问、对应笔记标题…（可留空，添加后随时补充）"
-                    />
-                  </label>
-                  <div className="task-form-row">
-                    <label>
-                      类型
-                      <select
-                        value={taskKind}
-                        onChange={(e) =>
-                          setTaskKind(e.target.value as 'learn' | 'review')
-                        }
-                      >
-                        <option value="learn">学习</option>
-                        <option value="review">复习</option>
-                      </select>
-                    </label>
-                    <label>
-                      关联课程
-                      <select
-                        value={taskCourseId}
-                        onChange={(e) => setTaskCourseId(e.target.value)}
-                      >
-                        <option value="">不关联</option>
-                        {courses.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
-                      计划日期
-                      <input
-                        type="date"
-                        value={taskDate}
-                        onChange={(e) => setTaskDate(e.target.value)}
-                      />
-                    </label>
-                  </div>
-                  <button className="primary" type="submit">
-                    添加到计划
-                  </button>
-                </form>
-              </details>
-            </div>
-            <input
-              aria-label="搜索任务"
-              placeholder="搜索任务、内容、课程或日期"
-              value={taskQuery}
-              onChange={(e) => setTaskQuery(e.target.value)}
-            />
-            {sortedTasks.length ? (
-              <div className="task-list">
-                {sortedTasks.map((t) => (
-                  <div key={t.id} id={`task-${t.id}`} className="task-item">
-                    <div className={`task-row ${t.status}`}>
-                      <label className="check-label">
-                        <input
-                          type="checkbox"
-                          checked={t.status === 'done'}
-                          onChange={() => toggleTask(t.id)}
-                          aria-label={`标记完成 ${t.title}`}
-                        />
-                        <span className="task-title">{t.title}</span>
-                      </label>
-                      <span className={`task-kind ${t.kind}`}>
-                        {t.kind === 'learn' ? '学习' : '复习'}
-                      </span>
-                      {t.courseId && (
-                        <span className="task-course">
-                          {courses.find((c) => c.id === t.courseId)?.name ?? ''}
-                        </span>
-                      )}
-                      {t.date && <span className="task-date">{t.date}</span>}
-                      <button
-                        className="icon-button task-expand"
-                        aria-label={`查看任务详情 ${t.title}`}
-                        aria-expanded={expandedTask === t.id}
-                        onClick={() =>
-                          setExpandedTask(expandedTask === t.id ? null : t.id)
-                        }
-                      >
-                        <ChevronDown
-                          size={14}
-                          className={
-                            expandedTask === t.id ? 'task-expand-open' : ''
-                          }
-                        />
-                      </button>
-                      <button
-                        className="icon-button"
-                        aria-label={`删除任务 ${t.title}`}
-                        onClick={() =>
-                          setRecordDelete({
-                            kind: 'task',
-                            id: t.id,
-                            courseId: t.courseId ?? '',
-                            title: t.title,
-                          })
-                        }
-                      >
-                        <X size={14} />
-                      </button>
-                    </div>
-                    {expandedTask === t.id && (
-                      <div className="task-detail">
-                        <button
-                          onClick={() => {
-                            setRecordError('');
-                            setRecordEdit({
-                              kind: 'task',
-                              id: t.id,
-                              courseId: t.courseId ?? '',
-                              title: t.title,
-                              content: t.content ?? '',
-                              taskKind: t.kind,
-                              date: t.date ?? '',
-                            });
-                          }}
-                        >
-                          编辑任务信息
-                        </button>
-                        {editingTaskId === t.id ? (
-                          <>
-                            <textarea
-                              rows={4}
-                              value={editContent}
-                              onChange={(e) => setEditContent(e.target.value)}
-                              placeholder="补充学习内容…"
-                            />
-                            <div className="actions">
-                              <button
-                                className="text-button"
-                                onClick={() => setEditingTaskId(null)}
-                              >
-                                取消
-                              </button>
-                              <button
-                                className="primary"
-                                onClick={() => saveEditTask(t.id)}
-                              >
-                                保存内容
-                              </button>
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <h4>学习内容</h4>
-                            {t.content ? (
-                              <Markdown text={t.content} />
-                            ) : (
-                              <p className="muted">
-                                还没有学习内容，点「编辑内容」补充。
-                              </p>
-                            )}
-                            <div className="actions">
-                              <button
-                                className="text-button"
-                                onClick={() => startEditTask(t)}
-                              >
-                                编辑内容
-                              </button>
-                            </div>
-                          </>
-                        )}
-                        <p className="muted task-meta">
-                          创建于 {t.createdAt.slice(0, 10)}
-                          {t.status === 'done' ? ' · 已完成' : ''}
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="muted">
-                {tasks.length
-                  ? '没有匹配的任务，请调整搜索条件。'
-                  : '还没有任务。点「添加任务」为自己安排一项学习或复习。'}
-              </p>
-            )}
-          </div>
-        </section>
-        {reviewUndo && <button onClick={undoReview}>撤销上次评分</button>}
+        )}
         {reviewQueue === null ? (
           <section className="panel review-card">
             <h2>{dueNotes.length} 条笔记已到复习日期</h2>
@@ -3667,6 +3505,260 @@ export default function Home() {
             </button>
           </section>
         )}
+        {reviewQueue === null && (
+          <section className="panel plan-panel">
+            <div className="plan-tasks">
+              <div className="plan-tasks-head">
+                <h3>
+                  我的学习任务
+                  {todoTaskCount > 0 && (
+                    <span className="count">{todoTaskCount}</span>
+                  )}
+                </h3>
+                <details className="add-task">
+                  <summary>添加任务</summary>
+                  <form className="task-form form-stack" onSubmit={addTask}>
+                    <label>
+                      任务名称
+                      <input
+                        value={taskTitle}
+                        onChange={(e) => setTaskTitle(e.target.value)}
+                        placeholder="例如：整理第二章笔记"
+                        maxLength={100}
+                      />
+                    </label>
+                    <label>
+                      学习内容
+                      <textarea
+                        rows={3}
+                        value={taskContent}
+                        onChange={(e) => setTaskContent(e.target.value)}
+                        placeholder="记录这节课的重点、疑问、对应笔记标题…（可留空，添加后随时补充）"
+                      />
+                    </label>
+                    <div className="task-form-row">
+                      <label>
+                        类型
+                        <select
+                          value={taskKind}
+                          onChange={(e) =>
+                            setTaskKind(e.target.value as 'learn' | 'review')
+                          }
+                        >
+                          <option value="learn">学习</option>
+                          <option value="review">复习</option>
+                        </select>
+                      </label>
+                      <label>
+                        关联课程
+                        <select
+                          value={taskCourseId}
+                          onChange={(e) => setTaskCourseId(e.target.value)}
+                        >
+                          <option value="">不关联</option>
+                          {courses.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        计划日期
+                        <input
+                          type="date"
+                          value={taskDate}
+                          onChange={(e) => setTaskDate(e.target.value)}
+                        />
+                      </label>
+                    </div>
+                    <button className="primary" type="submit">
+                      添加到计划
+                    </button>
+                  </form>
+                </details>
+              </div>
+              <input
+                aria-label="搜索任务"
+                placeholder="搜索任务、内容、课程或日期"
+                value={taskQuery}
+                onChange={(e) => setTaskQuery(e.target.value)}
+              />
+              {sortedTasks.length ? (
+                <div className="task-list">
+                  {sortedTasks.map((t) => (
+                    <div key={t.id} id={`task-${t.id}`} className="task-item">
+                      <div className={`task-row ${t.status}`}>
+                        <label className="check-label">
+                          <input
+                            type="checkbox"
+                            checked={t.status === 'done'}
+                            onChange={() => toggleTask(t.id)}
+                            aria-label={`标记完成 ${t.title}`}
+                          />
+                          <span className="task-title">{t.title}</span>
+                        </label>
+                        <span className={`task-kind ${t.kind}`}>
+                          {t.kind === 'learn' ? '学习' : '复习'}
+                        </span>
+                        {t.courseId && (
+                          <span className="task-course">
+                            {courses.find((c) => c.id === t.courseId)?.name ??
+                              ''}
+                          </span>
+                        )}
+                        {t.date && <span className="task-date">{t.date}</span>}
+                        <button
+                          className="icon-button task-expand"
+                          aria-label={`查看任务详情 ${t.title}`}
+                          aria-expanded={expandedTask === t.id}
+                          onClick={() =>
+                            setExpandedTask(expandedTask === t.id ? null : t.id)
+                          }
+                        >
+                          <ChevronDown
+                            size={14}
+                            className={
+                              expandedTask === t.id ? 'task-expand-open' : ''
+                            }
+                          />
+                        </button>
+                        <button
+                          className="icon-button"
+                          aria-label={`删除任务 ${t.title}`}
+                          onClick={() =>
+                            setRecordDelete({
+                              kind: 'task',
+                              id: t.id,
+                              courseId: t.courseId ?? '',
+                              title: t.title,
+                            })
+                          }
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                      {expandedTask === t.id && (
+                        <div className="task-detail">
+                          <button
+                            onClick={() => {
+                              setRecordError('');
+                              setRecordEdit({
+                                kind: 'task',
+                                id: t.id,
+                                courseId: t.courseId ?? '',
+                                title: t.title,
+                                content: t.content ?? '',
+                                taskKind: t.kind,
+                                date: t.date ?? '',
+                              });
+                            }}
+                          >
+                            编辑任务信息
+                          </button>
+                          {editingTaskId === t.id ? (
+                            <>
+                              <textarea
+                                rows={4}
+                                value={editContent}
+                                onChange={(e) => setEditContent(e.target.value)}
+                                placeholder="补充学习内容…"
+                              />
+                              <div className="actions">
+                                <button
+                                  className="text-button"
+                                  onClick={() => setEditingTaskId(null)}
+                                >
+                                  取消
+                                </button>
+                                <button
+                                  className="primary"
+                                  onClick={() => saveEditTask(t.id)}
+                                >
+                                  保存内容
+                                </button>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <h4>学习内容</h4>
+                              {t.content ? (
+                                <Markdown text={t.content} />
+                              ) : (
+                                <p className="muted">
+                                  还没有学习内容，点「编辑内容」补充。
+                                </p>
+                              )}
+                              <div className="actions">
+                                <button
+                                  className="text-button"
+                                  onClick={() => startEditTask(t)}
+                                >
+                                  编辑内容
+                                </button>
+                              </div>
+                            </>
+                          )}
+                          <p className="muted task-meta">
+                            创建于 {t.createdAt.slice(0, 10)}
+                            {t.status === 'done' ? ' · 已完成' : ''}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="muted">
+                  {tasks.length
+                    ? '没有匹配的任务，请调整搜索条件。'
+                    : '还没有任务。点「添加任务」为自己安排一项学习或复习。'}
+                </p>
+              )}
+            </div>
+            <details className="planning-advice">
+              <summary>学习规划与 AI 建议</summary>
+              <div className="plan-head">
+                <div>
+                  <p className="eyebrow">自主学习</p>
+                  <h2>学习规划</h2>
+                </div>
+                <button
+                  className="secondary"
+                  disabled={aiLoading}
+                  onClick={generatePlans}
+                >
+                  {aiLoading ? '生成中…' : 'AI 生成建议'}
+                  <Sparkles size={15} />
+                </button>
+              </div>
+              <div className="plan-suggestions">
+                {suggestions.map((s, i) => (
+                  <div key={i} className={`suggestion ${s.kind}`}>
+                    <span className="suggestion-icon">
+                      {s.kind === 'review' ? (
+                        <CalendarDays size={15} />
+                      ) : s.kind === 'learn' ? (
+                        <GraduationCap size={15} />
+                      ) : (
+                        <Lightbulb size={15} />
+                      )}
+                    </span>
+                    <span>{s.text}</span>
+                  </div>
+                ))}
+                {aiSuggestions.map((s, i) => (
+                  <div key={`ai-${i}`} className="suggestion ai">
+                    <span className="suggestion-icon">
+                      <Sparkles size={15} />
+                    </span>
+                    <span>{s}</span>
+                  </div>
+                ))}
+              </div>
+            </details>
+          </section>
+        )}
       </div>
     );
   }
@@ -3682,7 +3774,9 @@ export default function Home() {
       </main>
     );
   return (
-    <main className="app-shell">
+    <main
+      className={`app-shell ${activeView === 'study' && courses.length ? 'chat-mode' : ''}`}
+    >
       {mobileNavOpen && (
         <button
           className="mobile-scrim"
@@ -3854,6 +3948,8 @@ export default function Home() {
                     {activeCourse.code ? ` / ${activeCourse.code}` : ''}
                   </p>
                   <h1>{activeCourse.name}</h1>
+                </div>
+                <div className="course-actions">
                   <button
                     className="danger course-delete-button"
                     disabled={isSending || !!uploadProgress}
@@ -3862,13 +3958,13 @@ export default function Home() {
                     <Trash2 size={17} />
                     删除课程
                   </button>
+                  <button
+                    onClick={() => go('knowledge', { filter: activeCourse.id })}
+                  >
+                    <BookOpen size={17} />
+                    课程笔记 {courseNotes.length}
+                  </button>
                 </div>
-                <button
-                  onClick={() => go('knowledge', { filter: activeCourse.id })}
-                >
-                  <BookOpen size={17} />
-                  课程笔记 {courseNotes.length}
-                </button>
               </div>
               <nav className="course-tabs" aria-label="课程功能">
                 {tabs.map((tab) => (
@@ -4502,8 +4598,11 @@ export default function Home() {
                 />
               </>
             )}
-            <button className="primary" onClick={() => setShowSettings(false)}>
-              完成
+            <button
+              className="settings-close"
+              onClick={() => setShowSettings(false)}
+            >
+              关闭
             </button>
           </fieldset>
         </Modal>

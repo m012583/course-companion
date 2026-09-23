@@ -104,3 +104,5 @@ npm run test:domain
 - 资料页可并排记笔记，复习可查看下次日期并撤销上次评分。
 
 实现边界和验收见 [体验改进](docs/COMFORT_IMPROVEMENTS.md)。
+
+页面调整与验收见 [布局改进](docs/LAYOUT_IMPROVEMENTS.md)，运行 `npm run test:layout` 可复查主要布局行为。

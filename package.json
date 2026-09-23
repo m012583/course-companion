@@ -21,7 +21,8 @@
     "eval:ai": "node tools/evaluate.mjs --live",
     "test:ai-config": "node tools/test-ai-config.mjs",
     "test:comfort:server": "node tools/test-comfort-server.mjs",
-    "test:comfort": "node tools/comfort-smoke.cjs"
+    "test:comfort": "node tools/comfort-smoke.cjs",
+    "test:layout": "node tools/layout-smoke.cjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
