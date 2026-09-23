@@ -1,4 +1,19 @@
 'use client';
+import PassageReader from '@/components/passage-reader';
+import { suggestedLinks } from '@/lib/learning';
+import DataManagement from '@/components/data-management';
+import { recycleEntry, restoreEntry } from '@/lib/recycle';
+import type { TrashEntry } from '@/lib/workspace';
+import type { Backup } from '@/lib/backup';
+import type {
+  Message,
+  Session,
+  Course,
+  ViewId,
+  Preferences,
+  Workspace,
+  StudyTask,
+} from '@/lib/workspace';
 import ReactMarkdown from 'react-markdown';
 import NoteVisuals from '@/components/note-visuals';
 import KnowledgeNetwork from '@/components/knowledge-network';
@@ -51,42 +66,6 @@ import {
   type Note,
   type Passage,
 } from '@/lib/knowledge';
-type Message = {
-  role: 'user' | 'assistant';
-  text: string;
-  sources?: string[];
-  evidence?: Evidence[];
-  retrieved?: Evidence[];
-  saved?: boolean;
-  scope?: { selected: number; matchedFiles: number; passages: number };
-};
-type Session = {
-  id: string;
-  title: string;
-  messages: Message[];
-  updatedAt: string;
-};
-type Course = {
-  id: string;
-  name: string;
-  code: string;
-  materials: Material[];
-  graphFocus: string;
-  sessions: Session[];
-  teacher?: string;
-  semester?: string;
-  examDate?: string;
-  chapters?: string[];
-};
-type ViewId =
-  | 'home'
-  | 'course'
-  | 'materials'
-  | 'study'
-  | 'knowledge'
-  | 'graph'
-  | 'review';
-type Preferences = { brandName: string; userName: string; semester: string };
 type ApiData = {
   state?: Workspace;
   revision?: number;
@@ -96,26 +75,6 @@ type ApiData = {
   evidence?: Evidence[];
   retrieved?: Evidence[];
   scope?: Message['scope'];
-};
-type Workspace = {
-  courses: Course[];
-  notes: Note[];
-  courseId?: string;
-  sessionId?: string;
-  activeView?: ViewId;
-  preferences?: Preferences;
-  model?: string;
-  tasks?: StudyTask[];
-};
-type StudyTask = {
-  id: string;
-  title: string;
-  kind: 'learn' | 'review';
-  courseId?: string;
-  date?: string;
-  status: 'todo' | 'done';
-  content?: string;
-  createdAt: string;
 };
 type RecordEdit = {
   kind: 'chapter' | 'session' | 'material' | 'task' | 'message';
@@ -306,13 +265,17 @@ async function extractText(
   };
 }
 export default function Home() {
+  const [reading, setReading] = useState<Workspace['reading']>();
+  const [trash, setTrash] = useState<TrashEntry[]>([]);
+  const [dataBusy, setDataBusy] = useState(false);
+  const dataLock = useRef(false);
   const [courses, setCourses] = useState<Course[]>(initialCourses),
     [notes, setNotes] = useState<Note[]>([]);
   const [activeCourseId, setActiveCourseId] = useState('linear-algebra'),
     [activeSessionId, setActiveSessionId] = useState('');
   const [activeView, setActiveView] = useState<ViewId>('home');
   const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES),
-    [model, setModel] = useState('deepseek-v4-flash');
+    [model, setModel] = useState('');
   const [hydrated, setHydrated] = useState(false),
     [syncStatus, setSyncStatus] = useState<'saved' | 'saving' | 'offline'>(
       'saved',
@@ -451,7 +414,93 @@ export default function Home() {
     preferences,
     model,
     tasks,
+    trash,
+    reading,
   };
+  async function manageBackup(backup?: Backup) {
+    if (dataLock.current) throw new Error('另一项数据操作尚未完成');
+    if (syncBlocked.current)
+      throw new Error(
+        '当前存在同步冲突或离线，请先下载本机数据副本，再刷新核对',
+      );
+    if (isSending || uploadProgress || aiLoading)
+      throw new Error('请等待当前上传或 AI 请求完成');
+    dataLock.current = true;
+    setDataBusy(true);
+    try {
+      await saveQueue.current;
+      if (syncBlocked.current) throw new Error('发生同步冲突，请刷新核对');
+      const saved = await fetch('/api/workspace', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          state: workspaceState,
+          revision: revisionRef.current,
+        }),
+      });
+      const savedData = (await saved.json()) as ApiData;
+      if (!saved.ok) {
+        if (saved.status === 409) syncBlocked.current = true;
+        throw new Error(savedData.error || '恢复前保存失败');
+      }
+      revisionRef.current = savedData.revision!;
+      const response = await fetch(
+        '/api/backup',
+        backup
+          ? {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ backup, revision: revisionRef.current }),
+            }
+          : undefined,
+      );
+      if (!response.ok) {
+        if (response.status === 409) syncBlocked.current = true;
+        const data = (await response.json()) as ApiData;
+        throw new Error(data.error || '备份操作失败');
+      }
+      if (backup) {
+        const data = (await response.json()) as ApiData;
+        if (!data.state || data.revision === undefined)
+          throw new Error('恢复结果不完整，请刷新核对');
+        revisionRef.current = data.revision;
+        applyState({ ...data.state, activeView: 'home' });
+        setActiveSessionId('');
+        setSelectedMaterialId('');
+        setSelectedNoteId('');
+        setSelectedFiles([]);
+        setViewStack([]);
+        setReviewQueue(null);
+        setDraftNote(null);
+        setSource(null);
+        setNoteCourse('all');
+        setShowSettings(false);
+        history.replaceState(null, '', '#view=home');
+        setToast('完整备份已恢复；恢复前的数据可在设置中下载');
+      } else {
+        download(
+          await response.text(),
+          '课伴完整备份-' + localDate() + '.kbbackup.json',
+          'application/json',
+        );
+        setToast('完整备份已下载，包含附件');
+      }
+      setSyncStatus('saved');
+      setSyncError('');
+    } catch (error) {
+      if (backup) {
+        syncBlocked.current = true;
+        setSyncStatus('offline');
+        setSyncError(
+          '恢复未确认完成，自动保存已暂停。请刷新核对服务端数据后再继续。',
+        );
+      }
+      throw error;
+    } finally {
+      dataLock.current = false;
+      setDataBusy(false);
+    }
+  }
   function applyState(state: Workspace) {
     setCourses(state.courses);
     setNotes(
@@ -465,8 +514,10 @@ export default function Home() {
     setActiveSessionId(state.sessionId ?? '');
     setActiveView(state.activeView ?? 'home');
     setPreferences(state.preferences ?? DEFAULT_PREFERENCES);
-    setModel(state.model ?? 'deepseek-v4-flash');
+    setModel(state.model ?? '');
     setTasks(state.tasks ?? []);
+    setTrash(state.trash ?? []);
+    setReading(state.reading);
   }
   useEffect(() => {
     let cancelled = false;
@@ -494,7 +545,7 @@ export default function Home() {
         }
         setSyncStatus('offline');
         setSyncError(
-          '无法连接云端，正在使用本机副本。请先下载完整备份，再刷新重连。',
+          '无法连接云端，正在使用本机副本。请先下载本机数据副本，再刷新重连。',
         );
       }
       if (!cancelled) setHydrated(true);
@@ -514,17 +565,21 @@ export default function Home() {
       preferences,
       model,
       tasks,
+      trash,
+      reading,
     };
     try {
       localStorage.setItem('course-companion-state', JSON.stringify(state));
     } catch {
-      queueMicrotask(() => setSyncError('本机备份空间不足，请下载完整备份。'));
+      queueMicrotask(() =>
+        setSyncError('本机备份空间不足，请下载本机数据副本。'),
+      );
     }
-    if (syncBlocked.current) return;
+    if (syncBlocked.current || dataLock.current) return;
     const timer = setTimeout(() => {
       setSyncStatus('saving');
       saveQueue.current = saveQueue.current.then(async () => {
-        if (syncBlocked.current) return;
+        if (syncBlocked.current || dataLock.current) return;
         try {
           const response = await fetch('/api/workspace', {
             method: 'PUT',
@@ -536,7 +591,7 @@ export default function Home() {
             if (response.status === 409) syncBlocked.current = true;
             throw new Error(
               response.status === 409
-                ? '另一窗口已更新工作区。请下载完整备份后刷新核对。'
+                ? '另一窗口已更新工作区。请下载本机数据副本后刷新核对。'
                 : data.error || '保存失败',
             );
           }
@@ -548,7 +603,7 @@ export default function Home() {
           setSyncError(
             error instanceof Error
               ? error.message
-              : '保存失败，请下载完整备份。',
+              : '保存失败，请下载本机数据副本。',
           );
         }
       });
@@ -563,6 +618,9 @@ export default function Home() {
     preferences,
     model,
     tasks,
+    trash,
+    reading,
+    dataBusy,
     hydrated,
   ]);
   useEffect(() => {
@@ -864,6 +922,10 @@ export default function Home() {
   }
   function removeNote() {
     if (!pendingNoteDelete) return;
+    setTrash((current) => [
+      recycleEntry(workspaceState, 'note', pendingNoteDelete.id),
+      ...current,
+    ]);
     removeNotes(new Set([pendingNoteDelete.id]));
     setPendingNoteDelete(null);
     history.replaceState(
@@ -871,10 +933,14 @@ export default function Home() {
       '',
       `#${new URLSearchParams({ view: 'knowledge', filter: noteCourse })}`,
     );
-    setToast('笔记已删除');
+    setToast('笔记已移入回收站，可在设置中恢复');
   }
   function removeCourse() {
     if (!pendingCourseDelete) return;
+    setTrash((current) => [
+      recycleEntry(workspaceState, 'course', pendingCourseDelete.id),
+      ...current,
+    ]);
     const removed = pendingCourseDelete;
     const remaining = courses.filter((course) => course.id !== removed.id);
     const ids = new Set(
@@ -907,7 +973,7 @@ export default function Home() {
     setViewStack([]);
     setPendingCourseDelete(null);
     history.replaceState(null, '', '#view=home');
-    setToast('课程及其笔记、对话和学习任务已删除');
+    setToast('课程及其笔记、对话和学习任务已移入回收站');
   }
   function updateSession(
     courseId: string,
@@ -1346,11 +1412,28 @@ export default function Home() {
     setReviewRevealed(false);
     go('review');
   }
-  function gradeReview(correct: boolean) {
+  function gradeReview(rating: 'again' | 'hard' | 'good') {
+    const correct = rating === 'good';
     if (!reviewNote) return;
     const patch = scheduleReview(reviewNote, correct);
+    if (rating === 'hard') patch.reviewCount = reviewNote.reviewCount ?? 0;
     setNotes((current) =>
-      current.map((n) => (n.id === reviewNote.id ? { ...n, ...patch } : n)),
+      current.map((n) =>
+        n.id === reviewNote.id
+          ? {
+              ...n,
+              ...patch,
+              reviewHistory: [
+                ...(n.reviewHistory ?? []),
+                {
+                  at: new Date().toISOString(),
+                  answer: reviewAnswer.slice(0, 12000),
+                  rating,
+                },
+              ],
+            }
+          : n,
+      ),
     );
     setReviewIndex((i) => i + 1);
     setReviewCorrect((c) => c + (correct ? 1 : 0));
@@ -1490,6 +1573,36 @@ export default function Home() {
             </p>
           </div>
         </div>
+        {reading &&
+          courses.some(
+            (c) =>
+              c.id === reading.courseId &&
+              c.materials.some((m) => materialKey(m) === reading.materialKey),
+          ) && (
+            <div className="panel reading-resume">
+              <strong>
+                上次读到：
+                {
+                  courses
+                    .find((c) => c.id === reading.courseId)
+                    ?.materials.find(
+                      (m) => materialKey(m) === reading.materialKey,
+                    )?.name
+                }{' '}
+                · 第 {reading.passage + 1} 段
+              </strong>
+              <button
+                onClick={() =>
+                  go('materials', {
+                    course: reading.courseId,
+                    file: reading.materialKey,
+                  })
+                }
+              >
+                继续阅读
+              </button>
+            </div>
+          )}
         <section className="study-focus">
           <div className="resume">
             <span className="eyebrow">
@@ -2070,6 +2183,66 @@ export default function Home() {
                     <p>没有可读取正文。扫描件需要先转为含文字的 PDF。</p>
                   </div>
                 )}
+                <PassageReader
+                  key={activeCourse.id + ':' + materialKey(currentMaterial)}
+                  passages={
+                    currentMaterial.passages?.length
+                      ? currentMaterial.passages
+                      : splitPassages(text)
+                  }
+                  initial={
+                    reading?.materialKey === materialKey(currentMaterial) &&
+                    reading.courseId === activeCourse.id
+                      ? reading.passage
+                      : 0
+                  }
+                  remember={(passage) =>
+                    setReading({
+                      courseId: activeCourse.id,
+                      materialKey: materialKey(currentMaterial),
+                      passage,
+                      updatedAt: new Date().toISOString(),
+                    })
+                  }
+                  ask={(quote, passage) => {
+                    go('study');
+                    setScope('custom');
+                    setSelectedFiles([materialKey(currentMaterial)]);
+                    setQuestion(
+                      '请解释《' +
+                        currentMaterial.name +
+                        '》' +
+                        passage.section +
+                        '的这段原文，并引用资料：\n' +
+                        quote,
+                    );
+                  }}
+                  save={(quote, passage) => {
+                    const now = new Date().toISOString();
+                    setDraftOrigin(null);
+                    setDraftNote({
+                      id: crypto.randomUUID(),
+                      title: currentMaterial.name + ' · ' + passage.section,
+                      text: quote,
+                      course: activeCourse.name,
+                      courseId: activeCourse.id,
+                      createdAt: now,
+                      updatedAt: now,
+                      reviewAt: localDate(),
+                      chapter: currentMaterial.chapter,
+                      sources: [
+                        {
+                          id: 'S1',
+                          name: currentMaterial.name,
+                          fileId: currentMaterial.fileId,
+                          page: passage.page,
+                          section: passage.section,
+                          quote,
+                        },
+                      ],
+                    });
+                  }}
+                />
                 <details className="extraction">
                   <summary>查看提取的文字与定位</summary>
                   {currentMaterial.passages?.map((p, i) => (
@@ -2616,6 +2789,38 @@ export default function Home() {
                   ) : (
                     <>
                       <h2 className="note-title">{selectedNote.title}</h2>
+                      {suggestedLinks(selectedNote, notes).length > 0 && (
+                        <div className="suggested-links">
+                          <h3>可关联的笔记</h3>
+                          <small>
+                            按共同标签或同一章节推荐，确认后才建立关联。
+                          </small>
+                          {suggestedLinks(selectedNote, notes).map((item) => (
+                            <div className="button-row" key={item.note.id}>
+                              <button onClick={() => openNote(item.note)}>
+                                {item.note.title}
+                              </button>
+                              <small>{item.reason}</small>
+                              <button
+                                onClick={() =>
+                                  editNote({
+                                    relatedIds: [
+                                      ...(selectedNote.relatedIds ?? []),
+                                      item.note.id,
+                                    ],
+                                    relatedLabels: {
+                                      ...selectedNote.relatedLabels,
+                                      [item.note.id]: '相关',
+                                    },
+                                  })
+                                }
+                              >
+                                添加关联
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       <div className="tags">
                         <span>{selectedNote.chapter || '未分类'}</span>
                         {selectedNote.tags?.filter(Boolean).map((t) => (
@@ -2649,6 +2854,30 @@ export default function Home() {
                   )}
                   <details className="note-review-settings">
                     <summary>复习与掌握情况</summary>
+                    <div className="review-history">
+                      <h4>最近复习记录</h4>
+                      {(selectedNote.reviewHistory ?? [])
+                        .slice(-10)
+                        .reverse()
+                        .map((record, index) => (
+                          <details key={record.at + index}>
+                            <summary>
+                              {new Date(record.at).toLocaleString()} · 自评：
+                              {record.rating === 'good'
+                                ? '答对'
+                                : record.rating === 'hard'
+                                  ? '吃力'
+                                  : '没答对'}
+                            </summary>
+                            <p style={{ whiteSpace: 'pre-wrap' }}>
+                              {record.answer}
+                            </p>
+                          </details>
+                        ))}
+                      {!selectedNote.reviewHistory?.length && (
+                        <small>暂无记录，完成一次复习后显示。</small>
+                      )}
+                    </div>
                     <button
                       className="text-button"
                       onClick={() => startReview([selectedNote.id])}
@@ -3116,12 +3345,21 @@ export default function Home() {
                   <Markdown text={reviewNote.text} />
                   {evidenceList(reviewNote.sources ?? [])}
                 </div>
-                <p className="muted">对照笔记自行判断；这不是 AI 自动评分。</p>
+                <p className="muted">
+                  对照笔记自行判断；这不是 AI
+                  自动评分。回答和自评会保存到笔记复习记录。
+                </p>
                 <div className="actions">
-                  <button onClick={() => gradeReview(false)}>
+                  <button onClick={() => gradeReview('again')}>
                     没答对 · 明天再练
                   </button>
-                  <button className="primary" onClick={() => gradeReview(true)}>
+                  <button onClick={() => gradeReview('hard')}>
+                    有点吃力 · 明天巩固
+                  </button>
+                  <button
+                    className="primary"
+                    onClick={() => gradeReview('good')}
+                  >
                     答对了 · 下一条
                     <Check size={17} />
                   </button>
@@ -3285,12 +3523,12 @@ export default function Home() {
               onClick={() =>
                 download(
                   JSON.stringify(workspaceState, null, 2),
-                  `课伴完整备份-${localDate()}.json`,
+                  `课伴本机数据副本-${localDate()}.json`,
                   'application/json',
                 )
               }
             >
-              下载完整备份
+              下载本机数据副本（不含附件）
             </button>
           </div>
         )}
@@ -3697,7 +3935,7 @@ export default function Home() {
             删除课程“{pendingCourseDelete.name}”？
           </h2>
           <p>
-            将删除本课程的资料列表、全部笔记、学习对话和学习任务，笔记的关联与复习记录也会一起移除。此操作无法撤销。
+            课程、资料列表、笔记、复习记录、对话和任务将移入回收站，可在“设置与备份”中恢复。
           </p>
           <p className="muted">
             已上传的原文件保留，以便其他笔记中的引用链接继续使用。
@@ -3721,7 +3959,7 @@ export default function Home() {
         >
           <h2 id="remove-note-title">删除笔记“{pendingNoteDelete.title}”？</h2>
           <p>
-            将删除这条笔记及其复习记录，并从知识图谱和其他笔记的关联中移除。此操作无法撤销。
+            笔记及复习记录将移入回收站，并暂时从知识图谱中移除。可在“设置与备份”中恢复。
           </p>
           <div className="actions">
             <button onClick={() => setPendingNoteDelete(null)}>取消</button>
@@ -3745,18 +3983,24 @@ export default function Home() {
         </Modal>
       )}
       {showSettings && (
-        <Modal labelId="settings-title" onClose={() => setShowSettings(false)}>
+        <Modal
+          labelId="settings-title"
+          onClose={() => {
+            if (!dataBusy) setShowSettings(false);
+          }}
+        >
           <div className="modal-heading">
             <h2 id="settings-title">设置与备份</h2>
             <button
               className="icon-button"
+              disabled={dataBusy}
               aria-label="关闭设置"
               onClick={() => setShowSettings(false)}
             >
               <X size={20} />
             </button>
           </div>
-          <div className="form-stack">
+          <fieldset className="form-stack settings-fields" disabled={dataBusy}>
             <label>
               空间名称
               <input
@@ -3788,33 +4032,38 @@ export default function Home() {
             </label>
             <label>
               默认模型
-              <select value={model} onChange={(e) => setModel(e.target.value)}>
+              <small>
+                留空使用服务端配置；填写模型 ID 时须与已接入服务一致。
+              </small>
+              <input
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                list="model-options"
+                placeholder="填写服务商实际支持的模型 ID"
+              />
+              <datalist id="model-options">
                 {MODELS.map(([id, name]) => (
                   <option key={id} value={id}>
                     {name}
                   </option>
                 ))}
-              </select>
+              </datalist>
             </label>
-            <button
-              onClick={() =>
-                download(
-                  JSON.stringify(workspaceState, null, 2),
-                  `课伴完整备份-${localDate()}.json`,
-                  'application/json',
-                )
+            <DataManagement
+              trash={trash}
+              run={manageBackup}
+              restore={(id) => {
+                applyState(restoreEntry(workspaceState, id));
+                setToast('已从回收站恢复');
+              }}
+              remove={(id) =>
+                setTrash((current) => current.filter((item) => item.id !== id))
               }
-            >
-              <Download size={17} />
-              下载完整备份
-            </button>
-            <small className="muted">
-              包含全部课程、对话、笔记、复习记录、已提取正文和原文件链接。原文件请在资料页单独下载。
-            </small>
+            />
             <button className="primary" onClick={() => setShowSettings(false)}>
               完成
             </button>
-          </div>
+          </fieldset>
         </Modal>
       )}
       {toast && <output className="toast">{toast}</output>}

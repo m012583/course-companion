@@ -45,6 +45,7 @@ export default function KnowledgeNetwork({
     [selected, setSelected] = useState('');
   const [local, setLocal] = useState(false),
     [depth, setDepth] = useState(1);
+  const [tag, setTag] = useState('');
   const [camera, setCamera] = useState({ x: 0, y: 0, scale: 1 });
   const [moves, setMoves] = useState<Record<string, Point>>({});
   const [linkTo, setLinkTo] = useState(''),
@@ -64,14 +65,16 @@ export default function KnowledgeNetwork({
     );
   const filtered = useMemo(
     () =>
-      notes.filter(
-        (n) =>
-          course === 'all' ||
-          n.courseId === course ||
-          (!n.courseId &&
-            n.course === courses.find((c) => c.id === course)?.name),
-      ),
-    [notes, courses, course],
+      notes
+        .filter((n) => !tag || n.tags?.includes(tag))
+        .filter(
+          (n) =>
+            course === 'all' ||
+            n.courseId === course ||
+            (!n.courseId &&
+              n.course === courses.find((c) => c.id === course)?.name),
+        ),
+    [notes, courses, course, tag],
   );
   const whole = useMemo(() => buildKnowledgeNetwork(filtered), [filtered]);
   const graph = useMemo(
@@ -247,6 +250,22 @@ export default function KnowledgeNetwork({
           ))}
         </select>
         <div className="network-modes" aria-label="图谱范围">
+          <select
+            aria-label="图谱标签范围"
+            value={tag}
+            onChange={(e) => {
+              setTag(e.target.value);
+              setSelected('');
+              setLocal(false);
+            }}
+          >
+            <option value="">全部标签</option>
+            {[...new Set(notes.flatMap((n) => n.tags ?? []))]
+              .sort()
+              .map((value) => (
+                <option key={value}>{value}</option>
+              ))}
+          </select>
           <button aria-pressed={!local} onClick={() => setLocal(false)}>
             全部知识
           </button>
@@ -279,9 +298,20 @@ export default function KnowledgeNetwork({
       {!whole.nodes.length ? (
         <div className="graph-empty">
           <Network size={32} />
-          <h3>{notes.length ? '这门课程还没有笔记' : '从第一篇笔记开始'}</h3>
+          <h3>
+            {notes.length ? '当前课程或标签下没有笔记' : '从第一篇笔记开始'}
+          </h3>
           <p>保存笔记后会出现节点，添加关联后会出现连线。</p>
-          <button onClick={notes.length ? () => setCourse('all') : onNew}>
+          <button
+            onClick={
+              notes.length
+                ? () => {
+                    setCourse('all');
+                    setTag('');
+                  }
+                : onNew
+            }
+          >
             {notes.length ? '查看全部课程' : '新建笔记'}
           </button>
         </div>

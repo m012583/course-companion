@@ -2636,3 +2636,12 @@ progress {
     font-size: 19px;
   }
 }
+
+.settings-fields { border: 0; padding: 0; min-width: 0; }
+.data-management { border-top: 1px solid var(--border, #ddd); padding-top: 16px; }
+.trash-row, .backup-preview { display: grid; gap: 8px; padding: 12px; border: 1px solid var(--border, #ddd); border-radius: 8px; }
+
+.passage-reader { margin: 16px 0; padding: 16px; border: 1px solid #dce3df; border-radius: 12px; }
+.passage-quote { white-space: pre-wrap; line-height: 1.8; user-select: text; }
+.button-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.reading-resume { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; padding: 16px; margin-bottom: 16px; }

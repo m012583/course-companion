@@ -33,6 +33,11 @@ export type Material = {
   chapter?: string;
 };
 export type Note = {
+  reviewHistory?: {
+    at: string;
+    answer: string;
+    rating: 'again' | 'hard' | 'good';
+  }[];
   id: string;
   title: string;
   text: string;
@@ -188,6 +193,16 @@ export function retrieve(
         : splitPassages(material.content ?? '')
       ).map((passage) => {
         const text = passage.text.toLowerCase();
+        const hits = tokens.filter((term) => text.includes(term));
+        const titleHit = tokens.some((term) =>
+          material.name.toLowerCase().includes(term),
+        );
+        // A single Chinese bigram in unrelated prose is weak evidence. Keep
+        // explicit title matches and English technical terms, otherwise require two hits.
+        const relevant =
+          hits.length >= 2 ||
+          titleHit ||
+          hits.some((term) => /^[a-z0-9_]+$/.test(term));
         const score = tokens.reduce(
           (sum, term) =>
             sum +
@@ -195,7 +210,7 @@ export function retrieve(
             (material.name.toLowerCase().includes(term) ? 0.25 : 0),
           0,
         );
-        return { material, passage, score };
+        return { material, passage, score: relevant ? score : 0 };
       }),
     )
     .filter((item) => item.score > 0)
@@ -225,8 +240,8 @@ export function retrieve(
   const evidence: Evidence[] = [];
   let used = 0;
   for (const { material, passage } of ranked) {
-    if (used + passage.text.length > maxCharacters || evidence.length >= 16)
-      break;
+    if (evidence.length >= 16) break;
+    if (used + passage.text.length > maxCharacters) continue;
     evidence.push({
       id: `S${evidence.length + 1}`,
       name: material.name,

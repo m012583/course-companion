@@ -1,5 +1,42 @@
 # 验证记录
 
+## 2026-09-23 改进版
+
+类型检查、全项目 lint、领域测试和生产构建通过；构建仍有超过 500 kB 的分块提示。原有内存 API 增删改查测试通过；新增真实 D1/R2 和浏览器测试通过，实际重启后状态与附件保持一致。详见 [改进验收](IMPROVEMENTS.md)。下方导入版记录是历史结果，不代表当前仍有 19 项 lint 报错。
+
+### 基础与检索验证
+
+```sh
+npm ci
+npm run typecheck
+npm run lint
+npm run test:domain
+npm run build
+npm run eval:retrieval
+```
+
+检索报告默认写 evaluation/retrieval-report.json。原始对比基线保存在 evaluation/retrieval-baseline.json。真实模型可用后设置 COURSE_KB_EVAL_URL（及可选 COURSE_KB_EVAL_MODEL），运行 npm run eval:ai，并人工核对每条答案和引用语义；该命令会产生实际模型请求费用。不要仅凭引用编号统计“回答正确率”。
+
+### 真实写入测试
+
+先在独立目录安装并启动本地服务，例如 npm run dev -- --host 127.0.0.1 --port 3012 --strictPort。测试拒绝包含非测试课程 ID 的工作区，但仍须使用专用目录。
+
+```powershell
+$env:COURSE_KB_STORAGE_URL = 'http://localhost:3012'
+$env:COURSE_KB_ALLOW_TEST_WRITES = 'isolated-test-workspace'
+$env:PLAYWRIGHT_MODULE = Join-Path $env:TEMP 'course-kb-check/node_modules/playwright-core'
+npm run test:storage
+npm run test:improvements
+```
+
+存储脚本验证附件、冲突、校验和恢复历史；浏览器脚本使用真实测试存储操作新功能。重启持久化另行检查：记录 GET /api/workspace，停止并在同一目录重启服务，再核对状态、revision 与 GET /api/files 附件字节。不能把浏览器 reload 称作服务重启。
+
+真实用户试用按 [试用执行单](USER_TRIAL.md) 开展，目前没有参与者实测记录。
+
+## 导入版历史记录
+
+
+
 ## 已执行
 
 - 在独立提交目录执行 `npm ci --no-audit --no-fund`，从锁文件安装 702 个包成功，未复制原目录 node_modules。

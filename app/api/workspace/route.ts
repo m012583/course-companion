@@ -1,19 +1,5 @@
-import { storage } from '@/lib/storage';
-
-async function workspaceDb() {
-  const db = storage().DB;
-  await db
-    .prepare(
-      'CREATE TABLE IF NOT EXISTS workspace (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 0)',
-    )
-    .run();
-  await db
-    .prepare(
-      'CREATE INDEX IF NOT EXISTS idx_workspace_revision ON workspace(revision)',
-    )
-    .run();
-  return db;
-}
+import { workspaceDb } from '@/lib/workspace-server';
+import { parseWorkspace } from '@/lib/workspace-schema';
 
 export async function GET() {
   try {
@@ -41,26 +27,19 @@ export async function PUT(request: Request) {
     request.headers.get('origin') !== new URL(request.url).origin
   )
     return new Response('Forbidden', { status: 403 });
-  const { state, revision } = (await request.json()) as {
-    state: { courses?: unknown[] };
-    revision: number;
-  };
-  if (!state || !Array.isArray(state.courses) || !Number.isInteger(revision))
-    return Response.json({ error: '无效备份数据' }, { status: 400 });
-  const MAX_COURSE_NAME = 60;
-  for (const course of state.courses as { name?: unknown }[]) {
-    if (
-      !course ||
-      typeof course !== 'object' ||
-      typeof course.name !== 'string' ||
-      !course.name.trim()
-    )
-      return Response.json(
-        { error: '课程数据无效：课程名称不能为空' },
-        { status: 400 },
-      );
-    if (course.name.length > MAX_COURSE_NAME)
-      course.name = course.name.trim().slice(0, MAX_COURSE_NAME);
+  let state;
+  let revision: number;
+  try {
+    const body = (await request.json()) as { state: unknown; revision: number };
+    state = parseWorkspace(body.state);
+    revision = body.revision;
+    if (!Number.isSafeInteger(revision) || revision < 0)
+      throw new Error('版本号无效');
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : '无效数据' },
+      { status: 400 },
+    );
   }
   const payload = JSON.stringify(state);
   if (payload.length > 8000000)
