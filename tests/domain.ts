@@ -9,7 +9,7 @@ import {
   remapFiles,
 } from '../lib/backup';
 import type { Workspace } from '../lib/workspace';
-import { retrieve } from '../lib/knowledge';
+import { retrieve, scheduleReview } from '../lib/knowledge';
 import { suggestedLinks } from '../lib/learning';
 const state: Workspace = {
   courses: [
@@ -174,4 +174,98 @@ assert.equal(
 );
 console.log(
   'PASS retrieval budget, absent evidence, reading metadata and explicit note suggestions',
+);
+
+// Three grades, calendar rollover, malformed recovery and draft attachments.
+const when = new Date(2026, 11, 31, 12);
+const again = scheduleReview(state.notes[0], 'again', when);
+const hard = scheduleReview(state.notes[0], 'hard', when);
+const good = scheduleReview(state.notes[0], 'good', when);
+assert.equal(again.reviewAt, '2027-01-01');
+assert.equal(hard.reviewAt, '2027-01-02');
+assert.equal(good.reviewAt, '2027-01-03');
+assert.equal(
+  scheduleReview({ ...state.notes[0], reviewCount: 4 }, 'again', when)
+    .reviewCount,
+  0,
+);
+assert.ok(
+  scheduleReview({ ...state.notes[0], reviewCount: 4 }, 'good', when).reviewAt >
+    good.reviewAt,
+);
+for (const kind of ['task', 'session', 'material'] as const) {
+  const entry = {
+    id: 'trash-new',
+    kind,
+    title: 'item',
+    deletedAt: 'today',
+    notes: [],
+    tasks:
+      kind === 'task'
+        ? [
+            {
+              id: 'task-new',
+              title: 'task',
+              kind: 'learn' as const,
+              status: 'todo' as const,
+              createdAt: 'today',
+              courseId: 'c1',
+            },
+          ]
+        : [],
+    links: [],
+    ownerId: kind === 'task' ? undefined : 'c1',
+    session:
+      kind === 'session'
+        ? { id: 'session-new', title: 'chat', messages: [], updatedAt: 'today' }
+        : undefined,
+    material:
+      kind === 'material'
+        ? {
+            name: 'restored',
+            fileId: 'file-new',
+            type: 'TXT',
+            size: '1 B',
+            status: '可检索',
+          }
+        : undefined,
+  };
+  const source = parseWorkspace({ ...state, trash: [entry] });
+  const restored = restoreEntry(source, entry.id);
+  assert.equal(restored.trash?.length, 0);
+  assert.throws(
+    () => restoreEntry({ ...restored, trash: [entry] }, entry.id),
+    /冲突/,
+  );
+  assert.throws(
+    () => restoreEntry({ ...source, courses: [] }, entry.id),
+    /所属课程/,
+  );
+}
+const draftState = parseWorkspace({
+  ...state,
+  drafts: [
+    {
+      ...state.notes[0],
+      id: 'draft',
+      sources: [
+        {
+          id: 'S1',
+          name: 'draft file',
+          fileId: 'draft-file',
+          section: 'page',
+          quote: 'quote',
+        },
+      ],
+    },
+  ],
+});
+assert.ok(fileIds(draftState).includes('draft-file'));
+assert.equal(
+  remapFiles(draftState, new Map([['draft-file', 'new-file']])).drafts?.[0]
+    .sources?.[0].fileId,
+  'new-file',
+);
+console.log(
+  'PASS graded scheduling, all recycle types, collision/owner guards and draft attachment remapping',
 );

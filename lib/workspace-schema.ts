@@ -118,6 +118,7 @@ const task = z.object({
   createdAt: str,
 });
 const schema = z.object({
+  drafts: z.array(note).optional(),
   reading: z
     .object({
       courseId: str,
@@ -150,7 +151,17 @@ const schema = z.object({
     .array(
       z.object({
         id,
-        kind: z.enum(['course', 'note']),
+        kind: z.enum(['course', 'note', 'task', 'session', 'material']),
+        ownerId: str.optional(),
+        session: z
+          .object({
+            id,
+            title: str,
+            messages: z.array(message),
+            updatedAt: str,
+          })
+          .optional(),
+        material: material.optional(),
         title: str,
         deletedAt: str,
         course: course.optional(),
@@ -173,6 +184,7 @@ export function parseWorkspace(value: unknown): Workspace {
   for (const list of [
     state.courses,
     state.notes,
+    state.drafts ?? [],
     state.tasks ?? [],
     state.trash ?? [],
     ...state.courses.map((c) => c.sessions),
@@ -181,6 +193,12 @@ export function parseWorkspace(value: unknown): Workspace {
       throw new Error('数据包含重复标识');
   }
   for (const entry of state.trash ?? []) {
+    if (entry.kind === 'task' && entry.tasks.length !== 1)
+      throw new Error('回收站任务数据不完整');
+    if (entry.kind === 'session' && (!entry.session || !entry.ownerId))
+      throw new Error('回收站对话数据不完整');
+    if (entry.kind === 'material' && (!entry.material || !entry.ownerId))
+      throw new Error('回收站资料数据不完整');
     if (entry.kind === 'course' && !entry.course)
       throw new Error('回收站课程数据不完整');
     if (entry.kind === 'note' && entry.notes.length !== 1)

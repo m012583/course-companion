@@ -84,7 +84,7 @@ npm run test:domain
 
 类型检查、全项目 lint、领域测试、浏览器增删改查及 `npm run build` 已通过。另有隔离环境的真实 D1/R2 备份、恢复、并发冲突与重启验证。详细重现步骤见 [测试记录](docs/TESTING.md)。
 
-本轮改进及限制见 [改进验收](docs/IMPROVEMENTS.md)。自编 30 题的检索结果位于 `evaluation/`，不代表真实模型回答准确率；真实 AI 与用户试用仍待验证。
+本轮改进及限制见 [改进验收](docs/IMPROVEMENTS.md)。自编 30 题的检索结果位于 `evaluation/`，不代表真实模型回答准确率；真实 AI 已完成开发集评测，真实用户试用仍待开展，详见 docs/AI_EVALUATION.md。
 
 ## 团队与开发来源
 
@@ -106,3 +106,5 @@ npm run test:domain
 实现边界和验收见 [体验改进](docs/COMFORT_IMPROVEMENTS.md)。
 
 页面调整与验收见 [布局改进](docs/LAYOUT_IMPROVEMENTS.md)，运行 `npm run test:layout` 可复查主要布局行为。
+
+数据保护、扫描文字识别及复习更新见 [可靠性与学习改进](docs/RELIABILITY_IMPROVEMENTS.md)。首次启动会从已安装依赖准备本地 OCR 组件，图片不会为 OCR 上传到第三方。

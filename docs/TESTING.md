@@ -77,3 +77,7 @@ npm run test:crud
 ## 2026-09-23 布局回归
 
 新增 `npm run test:layout`，覆盖六种屏幕尺寸、可见区域缩小模拟、分栏拖动和键盘调整、默认正文、复习顺序和移动对话列表。使用模拟 API，不写用户数据。详见 [布局验收](LAYOUT_IMPROVEMENTS.md)。真机软键盘和真实用户试用仍待完成。
+
+## 2026-09-24 数据保护与 OCR
+
+新增 test:ocr（脚本自建图片与扫描 PDF）、test:protection（隔离真实库）、test:scale（模拟大数据）和 eval:reliability（显式开启真实 AI）。详见 RELIABILITY_IMPROVEMENTS.md，保留检索失败 R04。

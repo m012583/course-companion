@@ -1,4 +1,4 @@
-import { useEffect, useState, type SetStateAction } from 'react';
+import { useCallback, useEffect, useState, type SetStateAction } from 'react';
 import type { Note } from '@/lib/knowledge';
 const KEY = 'course-companion-note-drafts-v1';
 export function useNoteDrafts() {
@@ -71,7 +71,24 @@ export function useNoteDrafts() {
       drafts: current.drafts.filter((n) => n.id !== id),
     }));
   }
+  const hydrateDrafts = useCallback(
+    (incoming: Note[], replace = false) =>
+      setState((current) => ({
+        ...current,
+        active: replace ? null : current.active,
+        drafts: replace
+          ? incoming
+          : [
+              ...new Map(
+                [...incoming, ...current.drafts].map((n) => [n.id, n]),
+              ).values(),
+            ],
+      })),
+    [],
+  );
   return {
+    hydrateDrafts,
+    ready: state.ready,
     draftNote: state.active,
     setDraftNote,
     drafts: state.drafts,

@@ -41,8 +41,8 @@ export default function DataManagement({
     >
       <h3>完整备份与恢复</h3>
       <p className="muted">
-        包含课程、笔记、对话、任务、回收站及全部引用附件。单文件最多 20
-        MB，附件总量最多 100 MB。备份含个人学习内容，请妥善保存。
+        包含课程、笔记、已暂存草稿、对话、任务、回收站及全部引用附件。单文件最多
+        20 MB，附件总量最多 100 MB。备份含个人学习内容，请妥善保存。
       </p>
       <button disabled={busy} onClick={() => void execute()}>
         下载完整备份（含附件）
@@ -79,6 +79,7 @@ export default function DataManagement({
             {candidate.state.courses.length} 门课程 ·{' '}
             {candidate.state.notes.length} 条笔记 ·{' '}
             {candidate.state.tasks?.length ?? 0} 个任务 ·{' '}
+            {candidate.state.drafts?.length ?? 0} 条草稿 ·{' '}
             {candidate.files.length} 个附件 ·{' '}
             {candidate.state.trash?.length ?? 0} 项回收站内容
           </p>
@@ -110,13 +111,13 @@ export default function DataManagement({
             if (!response.ok) throw new Error(data.error || '读取失败');
             setHistory(data.history ?? []);
             if (!data.history?.length)
-              setError('尚无恢复历史；首次恢复后自动生成。');
+              setError('尚无数据快照；保存修改或恢复备份后生成。');
           } catch (e) {
             setError(e instanceof Error ? e.message : '读取失败');
           }
         }}
       >
-        查看恢复前的数据快照
+        查看本地数据快照
       </button>
       {history.map((item) => (
         <a
@@ -124,9 +125,14 @@ export default function DataManagement({
           href={`/api/backup?recovery=${encodeURIComponent(item.id)}`}
           download
         >
-          下载 {new Date(item.createdAt).toLocaleString()} 的完整快照
+          下载 {item.id.startsWith('auto-') ? '自动' : '恢复前'}快照 ·{' '}
+          {new Date(item.createdAt).toLocaleString()}
         </a>
       ))}
+      <p className="muted">
+        有修改时每隔至少 30 分钟保存一次修改前快照，保留最近 20
+        份自动快照；恢复前快照单独保留。快照在本机，不能代替异地备份。
+      </p>
       <h3>回收站（{trash.length}）</h3>
       <small className="muted">
         恢复课程会一并恢复其笔记、对话和任务。永久删除只清除此回收站条目，已有备份及恢复快照仍保留。
@@ -135,7 +141,16 @@ export default function DataManagement({
       {trash.map((item) => (
         <div className="trash-row" key={item.id}>
           <strong>
-            {item.kind === 'course' ? '课程' : '笔记'}：{item.title}
+            {
+              {
+                course: '课程',
+                note: '笔记',
+                task: '任务',
+                session: '对话',
+                material: '资料',
+              }[item.kind]
+            }
+            ：{item.title}
           </strong>
           <small>{new Date(item.deletedAt).toLocaleString()}</small>
           <div className="button-row">

@@ -55,3 +55,6 @@ yarn-error.log*
 .vscode/
 .idea/
 *.key
+
+# Generated from locked npm OCR packages
+/public/ocr/

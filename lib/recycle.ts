@@ -44,6 +44,35 @@ export function recycleEntry(
 export function restoreEntry(state: Workspace, entryId: string): Workspace {
   const entry = state.trash?.find((t) => t.id === entryId);
   if (!entry) throw new Error('回收站内容不存在');
+  if (entry.ownerId && !state.courses.some((c) => c.id === entry.ownerId))
+    throw new Error('请先恢复所属课程');
+  if (
+    entry.kind === 'task' &&
+    entry.tasks.some(
+      (t) => t.courseId && !state.courses.some((c) => c.id === t.courseId),
+    )
+  )
+    throw new Error('请先恢复任务所属课程');
+  if (
+    entry.session &&
+    state.courses.some((c) =>
+      c.sessions.some((s) => s.id === entry.session!.id),
+    )
+  )
+    throw new Error('对话标识冲突，无法恢复');
+  if (
+    entry.material &&
+    state.courses.some(
+      (c) =>
+        c.id === entry.ownerId &&
+        c.materials.some(
+          (m) =>
+            (m.fileId || m.name) ===
+            (entry.material!.fileId || entry.material!.name),
+        ),
+    )
+  )
+    throw new Error('资料标识冲突，无法恢复');
   if (entry.course && state.courses.some((c) => c.id === entry.course!.id))
     throw new Error('课程标识冲突，无法恢复');
   if (
@@ -82,7 +111,19 @@ export function restoreEntry(state: Workspace, entryId: string): Workspace {
   });
   return {
     ...state,
-    courses,
+    courses: courses.map((c) =>
+      c.id === entry.ownerId
+        ? {
+            ...c,
+            sessions: entry.session
+              ? [...c.sessions, entry.session]
+              : c.sessions,
+            materials: entry.material
+              ? [...c.materials, entry.material]
+              : c.materials,
+          }
+        : c,
+    ),
     notes,
     tasks: [...(state.tasks ?? []), ...entry.tasks],
     trash: state.trash?.filter((t) => t.id !== entryId),

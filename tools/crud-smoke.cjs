@@ -234,7 +234,7 @@ let revision = 1;
     await page.getByRole('button', { name: '删除对话', exact: true }).click();
     await confirm();
     assert.equal(state.courses[0].sessions.length, 0);
-    assert.equal(state.notes[0].sessionId, undefined);
+    assert.equal(state.notes[0].sessionId, 's1'); // Preserve relation for conversation recovery.
     await page.getByRole('button', { name: '新建对话', exact: true }).click();
     await settle();
     assert.equal(state.courses[0].sessions.length, 1);

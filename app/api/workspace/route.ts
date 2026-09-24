@@ -52,12 +52,27 @@ export async function PUT(request: Request) {
       )
       .bind('local', '{"courses":[]}')
       .run();
-    const result = await db
-      .prepare(
-        'UPDATE workspace SET payload = ?, revision = revision + 1 WHERE id = ? AND revision = ?',
-      )
-      .bind(payload, 'local', revision)
-      .run();
+    const now = new Date().toISOString();
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    // Save prior state transactionally; conflicting writes create no snapshot.
+    const results = await db.batch([
+      db
+        .prepare(
+          "INSERT INTO workspace_recovery (id,created_at,payload) SELECT ?,?,payload FROM workspace WHERE id=? AND revision=? AND NOT EXISTS (SELECT 1 FROM workspace_recovery WHERE id LIKE 'auto-%' AND created_at>?)",
+        )
+        .bind('auto-' + crypto.randomUUID(), now, 'local', revision, cutoff),
+      db
+        .prepare(
+          'UPDATE workspace SET payload = ?, revision = revision + 1 WHERE id = ? AND revision = ?',
+        )
+        .bind(payload, 'local', revision),
+      db
+        .prepare(
+          "DELETE FROM workspace_recovery WHERE id LIKE 'auto-%' AND id NOT IN (SELECT id FROM workspace_recovery WHERE id LIKE 'auto-%' ORDER BY created_at DESC, id DESC LIMIT 20) AND EXISTS (SELECT 1 FROM workspace WHERE id=? AND revision=?)",
+        )
+        .bind('local', revision + 1),
+    ]);
+    const result = results[1];
     if (!result.meta.changes)
       return Response.json(
         { error: '另一个窗口已修改知识库，请刷新后重试' },

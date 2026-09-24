@@ -114,15 +114,28 @@ export function selectNotes(
       (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt),
     );
 }
-export function scheduleReview(note: Note, correct: boolean, now = new Date()) {
-  const count = correct ? (note.reviewCount ?? 0) + 1 : 0;
-  const days = correct ? [1, 3, 7, 14, 30][Math.min(count - 1, 4)] : 1;
+export function scheduleReview(
+  note: Note,
+  rating: boolean | 'again' | 'hard' | 'good',
+  now = new Date(),
+) {
+  const grade =
+    typeof rating === 'boolean' ? (rating ? 'good' : 'again') : rating;
+  const prior = Math.max(0, Math.floor(note.reviewCount ?? 0));
+  const count = grade === 'good' ? prior + 1 : grade === 'hard' ? prior : 0;
+  const goodDays = [3, 7, 14, 30, 60][Math.min(prior, 4)];
+  const days =
+    grade === 'again'
+      ? 1
+      : grade === 'hard'
+        ? Math.max(2, Math.floor(goodDays / 2))
+        : goodDays;
   const next = new Date(now);
   next.setDate(next.getDate() + days);
   return {
     reviewCount: count,
     reviewAt: localDate(next),
-    mastery: correct && count >= 3 ? '已掌握' : '复习中',
+    mastery: grade === 'good' && count >= 3 ? '已掌握' : '复习中',
     updatedAt: now.toISOString(),
   };
 }

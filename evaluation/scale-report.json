@@ -1,0 +1,11 @@
+{
+  "date": "2026-09-24T04:32:05.618Z",
+  "notes": 1000,
+  "materials": 40,
+  "passages": 4000,
+  "bytes": 4811585,
+  "loadMs": 1359,
+  "searchMs": 170,
+  "apiWriteDelayMs": 600,
+  "scope": "单次本机 Edge 开发服务、模拟 API；不是生产并发或容量上限"
+}

@@ -22,11 +22,19 @@
     "test:ai-config": "node tools/test-ai-config.mjs",
     "test:comfort:server": "node tools/test-comfort-server.mjs",
     "test:comfort": "node tools/comfort-smoke.cjs",
-    "test:layout": "node tools/layout-smoke.cjs"
+    "test:layout": "node tools/layout-smoke.cjs",
+    "predev": "node tools/prepare-ocr.mjs",
+    "prebuild": "node tools/prepare-ocr.mjs",
+    "test:ocr": "node tools/ocr-smoke.cjs",
+    "test:protection": "node tools/data-protection-smoke.mjs",
+    "test:scale": "node tools/scale-smoke.cjs",
+    "eval:reliability": "node tools/evaluate-reliability.mjs"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",
     "@shadcn/react": "0.3.0",
+    "@tesseract.js-data/chi_sim": "1.0.0",
+    "@tesseract.js-data/eng": "1.0.0",
     "class-variance-authority": "0.7.1",
     "clsx": "2.1.1",
     "cmdk": "1.1.1",
@@ -50,6 +58,7 @@
     "remark-math": "^6.0.0",
     "shadcn": "4.18.0",
     "tailwind-merge": "3.6.0",
+    "tesseract.js": "7.0.0",
     "tw-animate-css": "1.4.0",
     "vinext": "1.0.0-beta.9",
     "zod": "3.25.76"

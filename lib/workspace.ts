@@ -46,6 +46,7 @@ export type Preferences = {
 };
 
 export type Workspace = {
+  drafts?: Note[];
   reading?: {
     courseId: string;
     materialKey: string;
@@ -64,7 +65,10 @@ export type Workspace = {
 };
 export type TrashEntry = {
   id: string;
-  kind: 'course' | 'note';
+  kind: 'course' | 'note' | 'task' | 'session' | 'material';
+  ownerId?: string;
+  session?: Session;
+  material?: Material;
   title: string;
   deletedAt: string;
   course?: Course;

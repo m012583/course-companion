@@ -45,6 +45,8 @@ export default defineConfig(async () => {
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
   return {
+    // Prebundle OCR before first upload so development dependency discovery cannot reload an active import.
+    optimizeDeps: { include: ['tesseract.js'] },
     css: { postcss: { plugins: [tailwindcss()] } },
     server: isCodexSeatbeltSandbox
       ? { watch: { useFsEvents: false, usePolling: true } }

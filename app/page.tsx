@@ -1,4 +1,5 @@
 'use client';
+import MaterialCorrection from '@/components/material-correction';
 import ReadingDivider from '@/components/reading-divider';
 import AISettings from '@/components/ai-settings';
 import { useNoteDrafts } from '@/components/draft-storage';
@@ -199,8 +200,39 @@ function download(
 }
 async function extractText(
   file: File,
+  ocr = false,
+  progress: (message: string) => void = () => {},
 ): Promise<{ passages: Passage[]; coverage: Coverage }> {
   const limit = 400000;
+  if (/\.(png|jpe?g|webp)$/i.test(file.name)) {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas
+      .getContext('2d')!
+      .drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    bitmap.close();
+    const engine = await (await import('@/lib/ocr')).createOCR(progress);
+    try {
+      const raw = await engine.read(canvas);
+      const text = raw.slice(0, limit);
+      return {
+        passages: splitPassages(text, 1),
+        coverage: {
+          characters: text.length,
+          readPages: 1,
+          totalPages: 1,
+          emptyPages: text.trim() ? 0 : 1,
+          truncated: raw.length > limit,
+        },
+      };
+    } finally {
+      await engine.close();
+      canvas.width = canvas.height = 0;
+    }
+  }
   if (/\.pdf$/i.test(file.name)) {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
     pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -216,17 +248,40 @@ async function extractText(
       emptyPages = 0,
       truncated = false;
     const passages: Passage[] = [];
+    let engine:
+      | Awaited<ReturnType<typeof import('@/lib/ocr').createOCR>>
+      | undefined;
     try {
       for (let i = 1; i <= pdf.numPages; i++) {
-        if (characters >= limit || i > 500) {
+        if (characters >= limit || i > (ocr ? 20 : 500)) {
           truncated = true;
           break;
         }
         const page = await pdf.getPage(i);
         const data = await page.getTextContent();
-        const raw = data.items
+        let raw = data.items
           .map((item) => ('str' in item ? item.str : ''))
           .join(' ');
+        if (ocr && !raw.trim()) {
+          progress(`正在识别第 ${i}/${Math.min(pdf.numPages, 20)} 页`);
+          engine ??= await (await import('@/lib/ocr')).createOCR(progress);
+          const original = page.getViewport({ scale: 1 });
+          const viewport = page.getViewport({
+            scale: Math.min(
+              2,
+              2400 / Math.max(original.width, original.height),
+            ),
+          });
+          const canvas = document.createElement('canvas');
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          try {
+            await page.render({ canvas, viewport }).promise;
+            raw = await engine.read(canvas);
+          } finally {
+            canvas.width = canvas.height = 0;
+          }
+        }
         const text = raw.slice(0, limit - characters);
         if (text.length < raw.length) truncated = true;
         if (!text.trim()) emptyPages++;
@@ -246,6 +301,7 @@ async function extractText(
         },
       };
     } finally {
+      await engine?.close();
       await loadingTask.destroy();
     }
   }
@@ -267,6 +323,8 @@ export default function Home() {
     draftNote,
     setDraftNote,
     drafts,
+    hydrateDrafts,
+    ready: draftsReady,
     discard: discardDraft,
     error: draftError,
   } = useNoteDrafts();
@@ -281,6 +339,7 @@ export default function Home() {
   const [undoDelete, setUndoDelete] = useState('');
   const [savedAt, setSavedAt] = useState('');
   const [backupAt, setBackupAt] = useState('');
+  const [backupCheckAt, setBackupCheckAt] = useState(() => Date.now());
   const [readingSide, setReadingSide] = useState(false);
   const [materialListOpen, setMaterialListOpen] = useState(false);
   const [readingRatio, setReadingRatio] = useState(58);
@@ -438,6 +497,7 @@ export default function Home() {
     ? notes.find((n) => n.id === reviewQueue[reviewIndex])
     : undefined;
   const workspaceState: Workspace = {
+    drafts,
     courses,
     notes,
     courseId: activeCourseId,
@@ -504,6 +564,7 @@ export default function Home() {
     };
   }, [activeView]);
   function openSettings(tab: 'personal' | 'ai' | 'data') {
+    setBackupCheckAt(Date.now());
     setSettingsTab(tab);
     setShowSettings(true);
     setMobileNavOpen(false);
@@ -607,6 +668,7 @@ export default function Home() {
           throw new Error('恢复结果不完整，请刷新核对');
         revisionRef.current = data.revision;
         applyState({ ...data.state, activeView: 'home' });
+        hydrateDrafts(data.state.drafts ?? [], true);
         setActiveSessionId('');
         setSelectedMaterialId('');
         setSelectedNoteId('');
@@ -625,7 +687,7 @@ export default function Home() {
           '课伴完整备份-' + localDate() + '.kbbackup.json',
           'application/json',
         );
-        const now = new Date().toLocaleString();
+        const now = new Date().toISOString();
         setBackupAt(now);
         localStorage.setItem('course-companion-last-backup', now);
         setToast('完整备份已下载，包含附件');
@@ -676,6 +738,7 @@ export default function Home() {
           JSON.parse(localStorage.getItem('course-companion-state') || 'null');
         if (!cancelled && Array.isArray(state?.courses)) {
           applyState(state);
+          hydrateDrafts(state.drafts ?? []);
           revisionRef.current = data.revision ?? 0;
         }
       } catch {
@@ -698,10 +761,11 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [hydrateDrafts]);
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !draftsReady) return;
     const state = {
+      drafts,
       courses,
       notes,
       courseId: activeCourseId,
@@ -769,6 +833,8 @@ export default function Home() {
     trash,
     reading,
     dataBusy,
+    drafts,
+    draftsReady,
     hydrated,
   ]);
   useEffect(() => {
@@ -1006,11 +1072,41 @@ export default function Home() {
     setRecordError('');
     setToast('修改已保存');
   }
+  function recycleItem(
+    kind: 'task' | 'session' | 'material',
+    id: string,
+    ownerId?: string,
+  ) {
+    const owner = courses.find((c) => c.id === ownerId);
+    const task = tasks.find((t) => t.id === id);
+    const session = owner?.sessions.find((t) => t.id === id);
+    const material = owner?.materials.find((t) => materialKey(t) === id);
+    const item: TrashEntry = {
+      id: crypto.randomUUID(),
+      kind,
+      ownerId,
+      deletedAt: new Date().toISOString(),
+      title:
+        kind === 'task'
+          ? task!.title
+          : kind === 'session'
+            ? session!.title
+            : material!.name,
+      notes: [],
+      tasks: kind === 'task' ? [task!] : [],
+      links: [],
+      session: kind === 'session' ? session : undefined,
+      material: kind === 'material' ? material : undefined,
+    };
+    setTrash((current) => [...current, item]);
+    setUndoDelete(item.id);
+  }
   function deleteRecord() {
     if (!recordDelete) return;
     const entry = recordDelete;
     if (entry.kind === 'chapter') changeChapter(entry.courseId, entry.id, '');
     else if (entry.kind === 'task') {
+      recycleItem('task', entry.id);
       removeTask(entry.id);
       if (editingTaskId === entry.id) setEditingTaskId(null);
       if (expandedTask === entry.id) setExpandedTask(null);
@@ -1021,15 +1117,11 @@ export default function Home() {
         updatedAt: new Date().toISOString(),
       }));
     } else {
+      recycleItem('session', entry.id, entry.courseId);
       updateCourse(entry.courseId, (c) => ({
         ...c,
         sessions: c.sessions.filter((s) => s.id !== entry.id),
       }));
-      setNotes((current) =>
-        current.map((n) =>
-          n.sessionId === entry.id ? { ...n, sessionId: undefined } : n,
-        ),
-      );
       setViewStack((stack) => stack.filter((v) => v.session !== entry.id));
       if (activeSessionId === entry.id) {
         setActiveSessionId('');
@@ -1332,7 +1424,7 @@ export default function Home() {
         if (!response.ok || !data.id) throw new Error(data.error || '上传失败');
         let extracted: { passages: Passage[]; coverage: Coverage } | undefined;
         try {
-          extracted = await extractText(file);
+          extracted = await extractText(file, false, setUploadProgress);
         } catch {
           errors.push(`${file.name}：原文件已保存，文字提取失败，可重新解析。`);
         }
@@ -1359,7 +1451,7 @@ export default function Home() {
     if (errors.length) setUploadError(errors.join('\n'));
     else setToast(`${files.length} 份资料已加入课程`);
   }
-  async function reparse(material: Material) {
+  async function reparse(material: Material, ocr = false) {
     if (!material.fileId) return;
     const courseId = activeCourse.id;
     setUploadProgress(`重新读取 · ${material.name}`);
@@ -1371,6 +1463,8 @@ export default function Home() {
       if (!response.ok) throw new Error('无法读取原文件');
       const data = await extractText(
         new File([await response.blob()], material.name),
+        ocr,
+        setUploadProgress,
       );
       updateCourse(courseId, (c) => ({
         ...c,
@@ -1397,6 +1491,7 @@ export default function Home() {
   function removeMaterial() {
     if (!pendingDelete) return;
     const removed = pendingDelete;
+    recycleItem('material', materialKey(removed), activeCourse.id);
     updateCourse(activeCourse.id, (c) => ({
       ...c,
       materials: c.materials.filter(
@@ -1408,7 +1503,7 @@ export default function Home() {
     );
     if (selectedMaterialId === materialKey(removed)) setSelectedMaterialId('');
     setPendingDelete(null);
-    setToast('已从课程移除，已保存笔记中的原文链接仍可使用。');
+    setToast('资料已移入回收站，原文链接仍可使用，可撤销删除。');
   }
   async function submitQuestion(event?: { preventDefault(): void }) {
     event?.preventDefault();
@@ -1627,8 +1722,7 @@ export default function Home() {
       correct: reviewCorrect,
       answer: reviewAnswer,
     });
-    const patch = scheduleReview(reviewNote, correct);
-    if (rating === 'hard') patch.reviewCount = reviewNote.reviewCount ?? 0;
+    const patch = scheduleReview(reviewNote, rating);
     setNotes((current) =>
       current.map((n) =>
         n.id === reviewNote.id
@@ -1747,7 +1841,8 @@ export default function Home() {
             </div>
           )}
           <p className="muted">
-            按关键词匹配正文；概览问题会选取代表片段，不代表逐页阅读全文。扫描图片尚不支持文字识别。
+            按关键词匹配正文；概览问题会选取代表片段，不代表逐页阅读全文。扫描
+            PDF 请先在资料页使用“识别扫描文字”。
           </p>
           {contextMaterials.some(
             (m) => !m.coverage || m.coverage.truncated,
@@ -2221,14 +2316,14 @@ export default function Home() {
               disabled={!!uploadProgress}
               type="file"
               multiple
-              accept=".pdf,.docx,.txt,.md,.markdown"
+              accept=".pdf,.docx,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp"
               onChange={addMaterials}
             />
           </label>
         </div>
         <p className="muted small">
-          支持 PDF、DOCX、TXT、Markdown，每份不超过 20 MB。最多提取 40 万字符或
-          500 页，超出部分会明确标注。
+          支持 PDF、DOCX、TXT、Markdown、PNG/JPG/WebP 图片，每份不超过 20
+          MB。最多提取 40 万字符或 500 页，超出部分会明确标注。
         </p>
         {uploadProgress && (
           <output className="notice">
@@ -2367,10 +2462,53 @@ export default function Home() {
                       <RefreshCw size={16} />
                       重新解析
                     </button>
+                    {currentMaterial.type === 'PDF' && (
+                      <button
+                        disabled={!!uploadProgress}
+                        onClick={() => void reparse(currentMaterial, true)}
+                      >
+                        识别扫描文字
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="reading-meta">
                   <p className="notice">{coverageLabel(currentMaterial)}</p>
+                  <small>
+                    扫描文字在本机识别，每次最多处理 PDF 前 20
+                    页。请对照原文件核对；手写、公式和复杂表格可能识别不准。
+                  </small>
+                  <MaterialCorrection
+                    key={
+                      materialKey(currentMaterial) +
+                      JSON.stringify(currentMaterial.coverage)
+                    }
+                    passages={currentMaterial.passages ?? []}
+                    save={(passages) =>
+                      updateCourse(activeCourse.id, (c) => ({
+                        ...c,
+                        materials: c.materials.map((m) =>
+                          materialKey(m) === materialKey(currentMaterial)
+                            ? {
+                                ...m,
+                                passages,
+                                content: undefined,
+                                status: '已校正',
+                                coverage: {
+                                  ...m.coverage,
+                                  characters: passages.reduce(
+                                    (n, p) => n + p.text.length,
+                                    0,
+                                  ),
+                                  truncated: m.coverage?.truncated ?? false,
+                                },
+                              }
+                            : m,
+                        ),
+                      }))
+                    }
+                  />
+
                   <label>
                     所属章节
                     <select
@@ -2421,7 +2559,10 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="empty">
-                    <p>没有可读取正文。扫描件需要先转为含文字的 PDF。</p>
+                    <p>
+                      没有可读取正文。扫描 PDF
+                      可点击“识别扫描文字”；图片可重新解析。
+                    </p>
                   </div>
                 )}
                 {readingSide && (
@@ -3409,7 +3550,7 @@ export default function Home() {
             <h2>{dueNotes.length} 条笔记已到复习日期</h2>
             <p>
               写下你的回答，查看笔记解析，再自行判断是否答对。系统按
-              1、3、7、14、30 天安排后续复习。
+              本次自评与连续答对次数安排后续复习：没答对次日再练，有点吃力缩短间隔，答对逐步延长。
             </p>
             <button
               className="primary"
@@ -3476,16 +3617,17 @@ export default function Home() {
                 </p>
                 <div className="actions">
                   <button onClick={() => gradeReview('again')}>
-                    没答对 · {scheduleReview(reviewNote, false).reviewAt} 再练
+                    没答对 · {scheduleReview(reviewNote, 'again').reviewAt} 再练
                   </button>
                   <button onClick={() => gradeReview('hard')}>
-                    有点吃力 · {scheduleReview(reviewNote, false).reviewAt} 巩固
+                    有点吃力 · {scheduleReview(reviewNote, 'hard').reviewAt}{' '}
+                    巩固
                   </button>
                   <button
                     className="primary"
                     onClick={() => gradeReview('good')}
                   >
-                    答对了 · {scheduleReview(reviewNote, true).reviewAt} 再练
+                    答对了 · {scheduleReview(reviewNote, 'good').reviewAt} 再练
                     <Check size={17} />
                   </button>
                 </div>
@@ -4582,6 +4724,14 @@ export default function Home() {
                   最近下载完整备份：{backupAt || '本浏览器暂无记录'}
                   。本机保存不等于备份。
                 </p>
+                {(!backupAt ||
+                  !Number.isFinite(Date.parse(backupAt)) ||
+                  backupCheckAt - Date.parse(backupAt) > 7 * 86400000) && (
+                  <output className="notice">
+                    建议下载一份完整备份并存到另一设备；当前没有最近 7
+                    天的备份下载记录。
+                  </output>
+                )}
                 <DataManagement
                   trash={trash}
                   run={manageBackup}
