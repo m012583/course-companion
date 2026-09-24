@@ -193,12 +193,33 @@ function terms(text: string) {
     ]),
   ];
 }
+// Exact Chinese words supplement bigrams: one meaningful shared word can
+// locate a passage, while accidental two-character overlaps remain insufficient.
+const segmenter = new Intl.Segmenter('zh-CN', { granularity: 'word' });
+const genericWords = new Set(
+  '这个 那个 这些 那些 什么 为什么 怎么 如何 多少 是否 可以 应该 根据 资料 内容 原文 问题 回答 答案 说明 介绍 相关 提供 进行 使用 学习 知识 我们 你们 他们 一个 一些 其中 这里 那里 这种 情况 方法 结果 要求 系统 输出 服务'.split(
+    ' ',
+  ),
+);
+function chineseWords(text: string) {
+  return new Set(
+    [...segmenter.segment(text)]
+      .filter(
+        (part) =>
+          part.isWordLike &&
+          /^[\u3400-\u9fff]{2,}$/.test(part.segment) &&
+          !genericWords.has(part.segment),
+      )
+      .map((part) => part.segment),
+  );
+}
 export function retrieve(
   question: string,
   materials: Material[],
   maxCharacters = 18000,
 ): Evidence[] {
-  const tokens = terms(question);
+  const tokens = terms(question).filter((term) => !genericWords.has(term));
+  const queryWords = chineseWords(question);
   const ranked = materials
     .flatMap((material) =>
       (material.passages?.length
@@ -210,10 +231,12 @@ export function retrieve(
         const titleHit = tokens.some((term) =>
           material.name.toLowerCase().includes(term),
         );
-        // A single Chinese bigram in unrelated prose is weak evidence. Keep
-        // explicit title matches and English technical terms, otherwise require two hits.
+        const wordHit =
+          hits.length === 1 &&
+          [...chineseWords(passage.text)].some((word) => queryWords.has(word));
         const relevant =
           hits.length >= 2 ||
+          wordHit ||
           titleHit ||
           hits.some((term) => /^[a-z0-9_]+$/.test(term));
         const score = tokens.reduce(

@@ -108,3 +108,5 @@ npm run test:domain
 页面调整与验收见 [布局改进](docs/LAYOUT_IMPROVEMENTS.md)，运行 `npm run test:layout` 可复查主要布局行为。
 
 数据保护、扫描文字识别及复习更新见 [可靠性与学习改进](docs/RELIABILITY_IMPROVEMENTS.md)。首次启动会从已安装依赖准备本地 OCR 组件，图片不会为 OCR 上传到第三方。
+
+中文单词漏检已修复，原始失败和复测记录见 [检索修复](docs/RETRIEVAL_FIX.md)。

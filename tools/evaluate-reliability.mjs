@@ -85,7 +85,7 @@ try {
     }
   }
   await writeFile(
-    'evaluation/reliability-live.json',
+    process.env.COURSE_KB_EVAL_OUTPUT || 'evaluation/reliability-live.json',
     JSON.stringify(
       {
         date: new Date().toISOString(),

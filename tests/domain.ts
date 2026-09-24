@@ -269,3 +269,58 @@ assert.equal(
 console.log(
   'PASS graded scheduling, all recycle types, collision/owner guards and draft attachment remapping',
 );
+
+// A single exact content word is sufficient; an accidental bigram is not.
+const singleWordMaterial = (text: string) => [
+  {
+    name: '讲义.txt',
+    type: 'TXT',
+    size: '1KB',
+    status: '可检索',
+    passages: [{ text, section: '正文' }],
+  },
+];
+assert.equal(
+  retrieve(
+    '根据资料，这个物体走了多少米？',
+    singleWordMaterial('某物体匀速运动，速度为每秒2米，持续3分钟。'),
+  ).length,
+  1,
+);
+assert.equal(
+  retrieve('这个植物需要多少水？', singleWordMaterial('植物每天需要补充水分。'))
+    .length,
+  1,
+);
+assert.equal(
+  retrieve('这个电阻是多少？', singleWordMaterial('电阻标称值为二十欧姆。'))
+    .length,
+  1,
+);
+assert.equal(
+  retrieve('请说明资料内容。', singleWordMaterial('资料中记录了其他内容。'))
+    .length,
+  0,
+);
+assert.equal(
+  retrieve(
+    '研究生有哪些课程？',
+    singleWordMaterial('这项研究方法的工作已经开始。'),
+  ).length,
+  0,
+);
+assert.equal(
+  retrieve(
+    '这个物体走了多少米？',
+    singleWordMaterial('矩阵的秩等于线性无关列的最大数量。'),
+  ).length,
+  0,
+);
+assert.equal(
+  retrieve('这个物体走了多少米？', singleWordMaterial('物体'.repeat(100)), 10)
+    .length,
+  0,
+);
+console.log(
+  'PASS exact Chinese word recall, generic-word/accidental-overlap rejection and context budget',
+);
