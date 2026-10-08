@@ -38,3 +38,7 @@ git clone course-companion-history.bundle course-companion-restored
 ```
 
 GitHub 为 Public 时评审可直接查看；若将来改为私有，应另行提供评审访问权限。
+
+## 0.4 更新
+
+从 `d0e2e53` 建立更新分支，先提交实际完成的学习流程与阅读界面，再提交依赖修复、评测和交付文档。旧的 17 条可达提交均作为祖先保留；不回填日期、不重写作者、不强推覆盖历史。

@@ -48,3 +48,11 @@ npm.cmd run start:local
 - `docs/evaluation/`：经整理的自编测试与验收记录，可随源码评审。
 
 本机运行不要求 Cloudflare 账号或公网部署。生产构建通过只代表能够打包，不代表已经完成公网安全验收。
+
+## 0.4 验证环境
+
+`COURSE_KB_TEST_URL` 供 `tools/verify-learning-flow.mjs` 使用，必须指向当前测试 checkout 对应的本机实例。脚本创建专用测试课程并清理自身数据，不要在日常工作区运行。
+
+`COURSE_KB_EVAL_URL` 供真实 AI 评测使用，只接受 localhost/127.0.0.1 的 HTTP 地址。默认 `--ai` 只运行 5 题；全量需显式指定 `--limit=80`，将产生实际服务调用。没有密钥时不运行。
+
+PDF 构建是可选文档工具，需要 Python、ReportLab、中文 TrueType 字体；不属于软件日常运行依赖。执行 `py -3 tools/build-tech-doc.py`，输出到 `output/pdf/`。

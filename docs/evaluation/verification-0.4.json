@@ -1,0 +1,12 @@
+{
+  "retrievalReport": "learning-retrieval-v1.json",
+  "browserReport": "learning-ui-v1.json",
+  "lint": 0,
+  "build": 0,
+  "verifiedAt": "2026-10-08T13:09:14.1350685Z",
+  "realAi": "not configured",
+  "tests": 0,
+  "typecheck": 0,
+  "testCount": 76,
+  "physicalDevices": "not tested"
+}

@@ -1,0 +1,16 @@
+{
+  "verifiedAt": "2026-10-08T13:33:35.159Z",
+  "browser": "Headless Edge",
+  "checkpoints": [
+    "draft confirmation, answer snapshot, wrong reason, review saved",
+    "review task opens exact question",
+    "reading position survives reload",
+    "reading excerpt creates evidence-linked persistent draft",
+    "desktop split view and 768/390 mobile switching without overflow",
+    "repeat practice preserves both attempts",
+    "question deletion and restore preserve history",
+    "course deletion remains discoverable and requires confirmation"
+  ],
+  "pageErrors": [],
+  "limits": "模拟视口和自动操作；不是实体手机、第二台电脑或真实同学试用。"
+}
