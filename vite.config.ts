@@ -2,6 +2,7 @@ import { sites } from '@openai/sites-vite-plugin';
 import tailwindcss from '@tailwindcss/postcss';
 import vinext from 'vinext';
 import { defineConfig } from 'vite';
+import { createHash } from 'node:crypto';
 import hostingConfig from './.openai/hosting.json' with { type: 'json' };
 
 const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
@@ -13,6 +14,12 @@ const { d1, r2 } = hostingConfig;
 const isCodexSeatbeltSandbox = process.env.CODEX_SANDBOX === 'seatbelt';
 
 const localBindingConfig = {
+  vars: {
+    COURSE_KB_INSTANCE: createHash('sha256')
+      .update(process.cwd().toLowerCase())
+      .digest('hex')
+      .slice(0, 16),
+  },
   main: 'vinext/server/fetch-handler',
   compatibility_flags: ['nodejs_compat'],
   d1_databases: d1
@@ -45,12 +52,22 @@ export default defineConfig(async () => {
   const { cloudflare } = await import('@cloudflare/vite-plugin');
 
   return {
-    // Prebundle OCR before first upload so development dependency discovery cannot reload an active import.
-    optimizeDeps: { include: ['tesseract.js'] },
     css: { postcss: { plugins: [tailwindcss()] } },
-    server: isCodexSeatbeltSandbox
-      ? { watch: { useFsEvents: false, usePolling: true } }
-      : undefined,
+    server: {
+      port: Number(process.env.COURSE_KB_PORT || 3002),
+      host: '127.0.0.1',
+      strictPort: true,
+      watch: {
+        // The enhanced checkout itself lives under /work, so anchor ignored
+        // children to this exact root rather than ignoring every /work path.
+        ignored: ['work', 'outputs', 'dist', '.wrangler'].map(
+          (folder) => `${process.cwd().replaceAll('\\', '/')}/${folder}/**`,
+        ),
+        ...(isCodexSeatbeltSandbox
+          ? { useFsEvents: false, usePolling: true }
+          : {}),
+      },
+    },
     plugins: [
       vinext(),
       sites(),

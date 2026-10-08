@@ -1,4 +1,5 @@
 import type { Note } from './knowledge';
+import { outgoingNoteIds } from './note-navigation';
 
 export type NetworkEdge = {
   id: string;
@@ -8,15 +9,21 @@ export type NetworkEdge = {
 };
 export type NetworkData = { nodes: Note[]; edges: NetworkEdge[] };
 export function buildKnowledgeNetwork(notes: Note[]): NetworkData {
-  const nodes = [...new Map(notes.map((n) => [n.id, n])).values()];
+  const nodes = [
+    ...new Map(
+      notes.filter((n) => !n.deletedAt).map((n) => [n.id, n]),
+    ).values(),
+  ];
   const ids = new Set(nodes.map((n) => n.id));
   const edges = new Map<string, NetworkEdge>();
   for (const note of nodes)
-    for (const related of new Set(note.relatedIds ?? [])) {
+    for (const related of outgoingNoteIds(note, nodes)) {
       if (related === note.id || !ids.has(related)) continue;
       const pair = [note.id, related].sort();
       const id = JSON.stringify(pair);
-      const label = note.relatedLabels?.[related] || '已关联';
+      const label =
+        note.relatedLabels?.[related] ||
+        (note.relatedIds?.includes(related) ? '已关联' : '正文引用');
       const edge = edges.get(id);
       if (edge) {
         if (!edge.labels.includes(label)) edge.labels.push(label);

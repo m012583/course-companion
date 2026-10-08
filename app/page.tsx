@@ -1,28 +1,45 @@
 'use client';
-import MaterialCorrection from '@/components/material-correction';
-import ReadingDivider from '@/components/reading-divider';
-import AISettings from '@/components/ai-settings';
-import { useNoteDrafts } from '@/components/draft-storage';
-import { searchWorkspace, type SearchHit } from '@/lib/search';
-import { readLines } from '@/lib/streams';
-import PassageReader from '@/components/passage-reader';
-import { suggestedLinks } from '@/lib/learning';
-import DataManagement from '@/components/data-management';
-import { recycleEntry, restoreEntry } from '@/lib/recycle';
-import type { TrashEntry } from '@/lib/workspace';
-import type { Backup } from '@/lib/backup';
-import type {
-  Message,
-  Session,
-  Course,
-  ViewId,
-  Preferences,
-  Workspace,
-  StudyTask,
-} from '@/lib/workspace';
 import ReactMarkdown from 'react-markdown';
+import Image from 'next/image';
 import NoteVisuals from '@/components/note-visuals';
 import KnowledgeNetwork from '@/components/knowledge-network';
+import QuickSearch from '@/components/quick-search';
+import ReviewPlanner from '@/components/review-planner';
+import StudyLab, { type StudyLabState } from '@/components/study-lab';
+import BackupPanel from '@/components/backup-panel';
+import { demoWorkspace } from '@/lib/demo-course';
+import { readEventStream } from '@/lib/event-stream';
+import { cleanCitations } from '@/lib/retrieval';
+import '@/components/study-lab.css';
+import CourseRecycleBin, {
+  type CourseTrashItem,
+} from '@/components/course-recycle-bin';
+import {
+  removeChapter,
+  restoreChapter,
+  type ChapterTrash,
+} from '@/lib/course-trash';
+import type { ChatImage } from '@/lib/chat-images';
+import {
+  makeLearningContext,
+  saveLessonToGuide,
+  type ChapterLesson,
+  type LearningContext,
+} from '@/lib/chapter-lesson';
+import type { publicAiSettings } from '@/lib/ai-provider';
+import CourseGuidePanel, { CourseGuideEditor } from '@/components/course-guide';
+import {
+  chapterToMarkdown,
+  type CourseGuide,
+  type GuideChapter,
+} from '@/lib/course-guide';
+import {
+  belongsToCourse,
+  isInDeletedCourse,
+  trashCourse,
+  restoreCourse,
+} from '@/lib/course-lifecycle';
+import type { ReviewPlan } from '@/lib/review-plans';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
@@ -51,10 +68,11 @@ import {
   CalendarDays,
   Database,
   Network,
-  Sparkles,
-  Lightbulb,
-  ArrowLeft,
-  ChevronDown,
+  Star,
+  RotateCcw,
+  ArrowUpRight,
+  Clock3,
+  ImagePlus,
 } from 'lucide-react';
 import {
   coverageLabel,
@@ -65,13 +83,66 @@ import {
   scheduleReview,
   splitPassages,
   passageText,
-  planSuggestions,
   type Coverage,
   type Evidence,
   type Material,
   type Note,
   type Passage,
 } from '@/lib/knowledge';
+type Message = {
+  role: 'user' | 'assistant';
+  text: string;
+  sources?: string[];
+  evidence?: Evidence[];
+  retrieved?: Evidence[];
+  saved?: boolean;
+  images?: ChatImage[];
+  deletedAt?: string;
+  scope?: {
+    selected: number;
+    matchedFiles: number;
+    passages: number;
+    imageCount?: number;
+    lessonTitle?: string;
+    retrieval?: string;
+    truncated?: boolean;
+  };
+};
+type Session = {
+  id: string;
+  title: string;
+  messages: Message[];
+  updatedAt: string;
+  deletedAt?: string;
+  learningContext?: LearningContext;
+};
+type Course = {
+  studyLab?: StudyLabState;
+  id: string;
+  name: string;
+  code: string;
+  materials: Material[];
+  graphFocus: string;
+  sessions: Session[];
+  teacher?: string;
+  semester?: string;
+  examDate?: string;
+  chapters?: string[];
+  guide?: CourseGuide;
+  removedChapters?: ChapterTrash[];
+  removedGuides?: { id: string; guide: CourseGuide }[];
+  deletedAt?: string;
+};
+type ViewId =
+  | 'home'
+  | 'course'
+  | 'lab'
+  | 'materials'
+  | 'study'
+  | 'knowledge'
+  | 'graph'
+  | 'review';
+type Preferences = { brandName: string; userName: string; semester: string };
 type ApiData = {
   state?: Workspace;
   revision?: number;
@@ -82,55 +153,36 @@ type ApiData = {
   retrieved?: Evidence[];
   scope?: Message['scope'];
 };
-type RecordEdit = {
-  kind: 'chapter' | 'session' | 'material' | 'task' | 'message';
-  id: string;
-  courseId: string;
-  title: string;
-  content?: string;
-  taskKind?: 'learn' | 'review';
-  date?: string;
-  index?: number;
+type Workspace = {
+  courses: Course[];
+  notes: Note[];
+  courseId?: string;
+  sessionId?: string;
+  activeView?: ViewId;
+  preferences?: Preferences;
+  model?: string;
+  reviewPlans?: ReviewPlan[];
 };
-type RecordDelete = {
-  kind: 'chapter' | 'session' | 'task' | 'message';
-  id: string;
-  courseId: string;
-  title: string;
-  index?: number;
-};
-const matchesQuery = (query: string, ...values: Array<string | undefined>) =>
-  values
-    .join(' ')
-    .toLocaleLowerCase()
-    .includes(query.trim().toLocaleLowerCase());
 const DEFAULT_PREFERENCES: Preferences = {
   brandName: '课伴',
   userName: '同学',
   semester: '2026 秋季学期',
 };
-const initialCourses: Course[] = [
-  {
-    id: 'linear-algebra',
-    name: '线性代数',
-    code: 'MA201',
-    materials: [],
-    graphFocus: '',
-    sessions: [],
-  },
-];
-const emptyCourse: Course = {
+const DEMO_WORKSPACE = demoWorkspace();
+const initialCourses: Course[] = DEMO_WORKSPACE.courses;
+const EMPTY_COURSE: Course = {
   id: '',
-  name: '',
+  name: '尚未添加课程',
   code: '',
   materials: [],
-  sessions: [],
   graphFocus: '',
+  sessions: [],
 };
 const tabs: Array<{ id: ViewId; name: string }> = [
+  { id: 'course', name: '课程导览' },
+  { id: 'lab', name: '教材与自测' },
   { id: 'study', name: '问答' },
   { id: 'materials', name: '资料' },
-  { id: 'course', name: '章节与课程设置' },
 ];
 const shortTitle = (text: string) =>
   text
@@ -153,6 +205,7 @@ function Modal({
   useEffect(() => {
     const dialog = ref.current;
     dialog?.showModal();
+    dialog?.querySelector<HTMLInputElement>('[cmdk-input]')?.focus();
     return () => dialog?.close();
   }, []);
   return (
@@ -200,39 +253,8 @@ function download(
 }
 async function extractText(
   file: File,
-  ocr = false,
-  progress: (message: string) => void = () => {},
 ): Promise<{ passages: Passage[]; coverage: Coverage }> {
   const limit = 400000;
-  if (/\.(png|jpe?g|webp)$/i.test(file.name)) {
-    const bitmap = await createImageBitmap(file);
-    const canvas = document.createElement('canvas');
-    const scale = Math.min(1, 2400 / Math.max(bitmap.width, bitmap.height));
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas
-      .getContext('2d')!
-      .drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    bitmap.close();
-    const engine = await (await import('@/lib/ocr')).createOCR(progress);
-    try {
-      const raw = await engine.read(canvas);
-      const text = raw.slice(0, limit);
-      return {
-        passages: splitPassages(text, 1),
-        coverage: {
-          characters: text.length,
-          readPages: 1,
-          totalPages: 1,
-          emptyPages: text.trim() ? 0 : 1,
-          truncated: raw.length > limit,
-        },
-      };
-    } finally {
-      await engine.close();
-      canvas.width = canvas.height = 0;
-    }
-  }
   if (/\.pdf$/i.test(file.name)) {
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
     pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -248,40 +270,17 @@ async function extractText(
       emptyPages = 0,
       truncated = false;
     const passages: Passage[] = [];
-    let engine:
-      | Awaited<ReturnType<typeof import('@/lib/ocr').createOCR>>
-      | undefined;
     try {
       for (let i = 1; i <= pdf.numPages; i++) {
-        if (characters >= limit || i > (ocr ? 20 : 500)) {
+        if (characters >= limit || i > 500) {
           truncated = true;
           break;
         }
         const page = await pdf.getPage(i);
         const data = await page.getTextContent();
-        let raw = data.items
+        const raw = data.items
           .map((item) => ('str' in item ? item.str : ''))
           .join(' ');
-        if (ocr && !raw.trim()) {
-          progress(`正在识别第 ${i}/${Math.min(pdf.numPages, 20)} 页`);
-          engine ??= await (await import('@/lib/ocr')).createOCR(progress);
-          const original = page.getViewport({ scale: 1 });
-          const viewport = page.getViewport({
-            scale: Math.min(
-              2,
-              2400 / Math.max(original.width, original.height),
-            ),
-          });
-          const canvas = document.createElement('canvas');
-          canvas.width = Math.ceil(viewport.width);
-          canvas.height = Math.ceil(viewport.height);
-          try {
-            await page.render({ canvas, viewport }).promise;
-            raw = await engine.read(canvas);
-          } finally {
-            canvas.width = canvas.height = 0;
-          }
-        }
         const text = raw.slice(0, limit - characters);
         if (text.length < raw.length) truncated = true;
         if (!text.trim()) emptyPages++;
@@ -301,7 +300,6 @@ async function extractText(
         },
       };
     } finally {
-      await engine?.close();
       await loadingTask.destroy();
     }
   }
@@ -319,55 +317,76 @@ async function extractText(
   };
 }
 export default function Home() {
-  const {
-    draftNote,
-    setDraftNote,
-    drafts,
-    hydrateDrafts,
-    ready: draftsReady,
-    discard: discardDraft,
-    error: draftError,
-  } = useNoteDrafts();
-  const [draftClose, setDraftClose] = useState(false);
-  const [settingsTab, setSettingsTab] = useState<'personal' | 'ai' | 'data'>(
-    'personal',
+  const [allCourses, setCourses] = useState<Course[]>(initialCourses),
+    [allNotes, setNotes] = useState<Note[]>(DEMO_WORKSPACE.notes);
+  const courses = useMemo(
+    () =>
+      allCourses
+        .filter((course) => !course.deletedAt)
+        .map((course) => ({
+          ...course,
+          sessions: course.sessions.filter((session) => !session.deletedAt),
+          materials: course.materials.filter((material) => !material.deletedAt),
+          guide: course.guide?.deletedAt ? undefined : course.guide,
+          chapters: [
+            ...new Set([
+              ...(course.chapters ?? []),
+              ...(!course.guide?.deletedAt
+                ? (course.guide?.chapters.map((chapter) => chapter.title) ?? [])
+                : []),
+            ]),
+          ],
+        })),
+    [allCourses],
   );
-  const [searchOpen, setSearchOpen] = useState(false);
-  const globalSearchRef = useRef<HTMLInputElement>(null);
-  const saveVersionRef = useRef(0);
-  const [globalQuery, setGlobalQuery] = useState('');
-  const [undoDelete, setUndoDelete] = useState('');
-  const [savedAt, setSavedAt] = useState('');
-  const [backupAt, setBackupAt] = useState('');
-  const [backupCheckAt, setBackupCheckAt] = useState(() => Date.now());
-  const [readingSide, setReadingSide] = useState(false);
-  const [materialListOpen, setMaterialListOpen] = useState(false);
-  const [readingRatio, setReadingRatio] = useState(58);
-  const [sessionsOpen, setSessionsOpen] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
-  const chatAbort = useRef<AbortController | null>(null);
-  const [liveReply, setLiveReply] = useState<{
-    course: string;
-    session: string;
-    message: Message;
-  } | null>(null);
-  const [reviewUndo, setReviewUndo] = useState<{
-    note: Note;
-    index: number;
-    correct: number;
-    answer: string;
-  } | null>(null);
-  const [reading, setReading] = useState<Workspace['reading']>();
-  const [trash, setTrash] = useState<TrashEntry[]>([]);
-  const [dataBusy, setDataBusy] = useState(false);
-  const dataLock = useRef(false);
-  const [courses, setCourses] = useState<Course[]>(initialCourses),
-    [notes, setNotes] = useState<Note[]>([]);
-  const [activeCourseId, setActiveCourseId] = useState('linear-algebra'),
+  const deletedCourses = useMemo(
+    () => allCourses.filter((course) => !!course.deletedAt),
+    [allCourses],
+  );
+  const [reviewPlans, setReviewPlans] = useState<ReviewPlan[]>([]);
+  const visibleReviewPlans = reviewPlans.filter((plan) =>
+    courses.some((course) => course.id === plan.courseId),
+  );
+  const notes = useMemo(
+    () =>
+      allNotes.filter(
+        (note) => !note.deletedAt && !isInDeletedCourse(note, allCourses),
+      ),
+    [allNotes, allCourses],
+  );
+  const deletedNotes = useMemo(
+    () =>
+      allNotes.filter(
+        (note) => !!note.deletedAt && !isInDeletedCourse(note, allCourses),
+      ),
+    [allNotes, allCourses],
+  );
+  const [noteCollection, setNoteCollection] = useState<
+    'all' | 'starred' | 'trash'
+  >('all');
+  const [showSearch, setShowSearch] = useState(false);
+  const [pendingDeleteNote, setPendingDeleteNote] = useState<Note | null>(null);
+  const [pendingDeleteCourse, setPendingDeleteCourse] = useState<Course | null>(
+    null,
+  );
+  const [activeCourseId, setActiveCourseId] = useState('demo-linear'),
     [activeSessionId, setActiveSessionId] = useState('');
   const [activeView, setActiveView] = useState<ViewId>('home');
-  const [preferences, setPreferences] = useState(DEFAULT_PREFERENCES),
-    [model, setModel] = useState('');
+  const [guideChapterId, setGuideChapterId] = useState('');
+  const [preferences, setPreferences] = useState(DEMO_WORKSPACE.preferences),
+    [model, setModel] = useState('deepseek-v4-flash');
+  const [aiSettings, setAiSettings] = useState<ReturnType<
+    typeof publicAiSettings
+  > | null>(null);
+  const [questionImages, setQuestionImages] = useState<ChatImage[]>([]);
+  const [isImageUploading, setIsImageUploading] = useState(false);
+  const [pendingRemoval, setPendingRemoval] = useState<{
+    kind: 'session' | 'message' | 'chapter' | 'guide';
+    title: string;
+    courseId: string;
+    sessionId?: string;
+    index?: number;
+  } | null>(null);
   const [hydrated, setHydrated] = useState(false),
     [syncStatus, setSyncStatus] = useState<'saved' | 'saving' | 'offline'>(
       'saved',
@@ -377,32 +396,18 @@ export default function Home() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false),
     [showSettings, setShowSettings] = useState(false);
   const [newCourseOpen, setNewCourseOpen] = useState(false),
-    [courseName, setCourseName] = useState(''),
+    [guideEditorId, setGuideEditorId] = useState(''),
     [newChapter, setNewChapter] = useState('');
-  const [tasks, setTasks] = useState<StudyTask[]>([]),
-    [taskTitle, setTaskTitle] = useState(''),
-    [taskKind, setTaskKind] = useState<'learn' | 'review'>('learn'),
-    [taskCourseId, setTaskCourseId] = useState(''),
-    [taskDate, setTaskDate] = useState(''),
-    [taskContent, setTaskContent] = useState('');
-  const [expandedTask, setExpandedTask] = useState<string | null>(null),
-    [editingTaskId, setEditingTaskId] = useState<string | null>(null),
-    [editContent, setEditContent] = useState('');
-  const [aiSuggestions, setAiSuggestions] = useState<string[]>([]),
-    [aiLoading, setAiLoading] = useState(false);
-  const [viewStack, setViewStack] = useState<
-    Array<{
-      view: ViewId;
-      course: string;
-      session: string;
-      file: string;
-      note: string;
-      filter: string;
-    }>
-  >([]);
   const [question, setQuestion] = useState(''),
     [isSending, setIsSending] = useState(false),
     [chatError, setChatError] = useState('');
+  const chatController = useRef<AbortController | null>(null);
+  const [streamText, setStreamText] = useState('');
+  const [streamStatus, setStreamStatus] = useState('');
+  const [streamTarget, setStreamTarget] = useState('');
+  const [semanticSearch, setSemanticSearch] = useState(false);
+  const persistenceEpoch = useRef(0);
+  useEffect(() => () => chatController.current?.abort(), []);
   const [scope, setScope] = useState<'course' | 'all' | 'custom'>('course'),
     [selectedFiles, setSelectedFiles] = useState<string[]>([]),
     [scopeOpen, setScopeOpen] = useState(false);
@@ -412,17 +417,6 @@ export default function Home() {
   const [uploadProgress, setUploadProgress] = useState(''),
     [uploadError, setUploadError] = useState('');
   const [pendingDelete, setPendingDelete] = useState<Material | null>(null);
-  const [pendingCourseDelete, setPendingCourseDelete] = useState<Course | null>(
-    null,
-  );
-  const [pendingNoteDelete, setPendingNoteDelete] = useState<Note | null>(null);
-  const [recordEdit, setRecordEdit] = useState<RecordEdit | null>(null);
-  const [recordDelete, setRecordDelete] = useState<RecordDelete | null>(null);
-  const [recordError, setRecordError] = useState('');
-  const [courseQuery, setCourseQuery] = useState('');
-  const [chapterQuery, setChapterQuery] = useState('');
-  const [sessionQuery, setSessionQuery] = useState('');
-  const [taskQuery, setTaskQuery] = useState('');
   const [noteQuery, setNoteQuery] = useState(''),
     [noteCourse, setNoteCourse] = useState('all'),
     [noteChapter, setNoteChapter] = useState(''),
@@ -430,11 +424,12 @@ export default function Home() {
   const [reviewOnly, setReviewOnly] = useState(false),
     [selectedNoteId, setSelectedNoteId] = useState(''),
     [editingNote, setEditingNote] = useState(false);
-  const [draftOrigin, setDraftOrigin] = useState<{
-    course: string;
-    session: string;
-    index: number;
-  } | null>(null);
+  const [draftNote, setDraftNote] = useState<Note | null>(null),
+    [draftOrigin, setDraftOrigin] = useState<{
+      course: string;
+      session: string;
+      index: number;
+    } | null>(null);
   const [source, setSource] = useState<Evidence | null>(null);
   const [reviewQueue, setReviewQueue] = useState<string[] | null>(null),
     [reviewIndex, setReviewIndex] = useState(0),
@@ -442,12 +437,17 @@ export default function Home() {
     [reviewRevealed, setReviewRevealed] = useState(false),
     [reviewCorrect, setReviewCorrect] = useState(0);
   const revisionRef = useRef(0),
+    loadedState = useRef(''),
     syncBlocked = useRef(false),
     saveQueue = useRef(Promise.resolve()),
     chatEndRef = useRef<HTMLDivElement>(null),
     routeApplied = useRef(false);
+  const imageInput = useRef<HTMLInputElement>(null);
+  const attachmentBatch = useRef(0);
   const activeCourse =
-      courses.find((c) => c.id === activeCourseId) ?? courses[0] ?? emptyCourse,
+      courses.find((c) => c.id === activeCourseId) ??
+      courses[0] ??
+      EMPTY_COURSE,
     materials = activeCourse.materials;
   const activeSession = activeCourse.sessions.find(
     (s) => s.id === activeSessionId,
@@ -482,250 +482,110 @@ export default function Home() {
   ];
   const filteredNotes = useMemo(
     () =>
-      selectNotes(notes, {
-        courseId: noteCourse === 'all' ? undefined : noteCourse,
-        courseName: courses.find((c) => c.id === noteCourse)?.name,
-        chapter: noteChapter,
-        tag: noteTag,
-        dueOnly: reviewOnly,
-        query: noteQuery,
-      }),
-    [notes, noteCourse, noteChapter, noteTag, reviewOnly, noteQuery, courses],
+      selectNotes(
+        noteCollection === 'trash'
+          ? deletedNotes
+          : noteCollection === 'starred'
+            ? notes.filter((n) => n.starred)
+            : notes,
+        {
+          courseId: noteCourse === 'all' ? undefined : noteCourse,
+          courseName: courses.find((c) => c.id === noteCourse)?.name,
+          chapter: noteChapter,
+          tag: noteTag,
+          dueOnly: reviewOnly,
+          query: noteQuery,
+        },
+      ),
+    [
+      notes,
+      deletedNotes,
+      noteCollection,
+      noteCourse,
+      noteChapter,
+      noteTag,
+      reviewOnly,
+      noteQuery,
+      courses,
+    ],
   );
   const selectedNote = notes.find((n) => n.id === selectedNoteId);
+  const noteCollectionLabel =
+    noteCollection === 'trash'
+      ? '回收站'
+      : noteCollection === 'starred'
+        ? '我的收藏'
+        : '全部笔记';
   const reviewNote = reviewQueue
     ? notes.find((n) => n.id === reviewQueue[reviewIndex])
     : undefined;
   const workspaceState: Workspace = {
-    drafts,
-    courses,
-    notes,
+    courses: allCourses,
+    notes: allNotes,
+    reviewPlans,
     courseId: activeCourseId,
     sessionId: activeSessionId,
     activeView,
     preferences,
     model,
-    tasks,
-    trash,
-    reading,
   };
-  useEffect(() => {
-    if (searchOpen) {
-      const id = requestAnimationFrame(() => globalSearchRef.current?.focus());
-      return () => cancelAnimationFrame(id);
-    }
-  }, [searchOpen]);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (
-        (e.ctrlKey || e.metaKey) &&
-        e.key.toLowerCase() === 'k' &&
-        !document.querySelector('dialog[open]')
-      ) {
-        e.preventDefault();
-        setSearchOpen(true);
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    queueMicrotask(() =>
-      setBackupAt(localStorage.getItem('course-companion-last-backup') || ''),
-    );
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-  useEffect(() => {
-    if (!isSending) return;
-    const start = Date.now();
-    queueMicrotask(() => setElapsed(0));
-    const timer = setInterval(
-      () => setElapsed(Math.floor((Date.now() - start) / 1000)),
-      1000,
-    );
-    return () => clearInterval(timer);
-  }, [isSending]);
-  useEffect(() => () => chatAbort.current?.abort(), []);
-  useEffect(() => {
-    if (activeView !== 'study') return;
-    const viewport = window.visualViewport;
-    const resize = () => {
-      const height = viewport?.height ?? window.innerHeight;
-      const root = document.documentElement;
-      root.style.setProperty('--chat-height', `${height}px`);
-      root.classList.toggle('chat-short', height <= 650);
-      root.classList.toggle('chat-tiny', height <= 500);
-    };
-    resize();
-    viewport?.addEventListener('resize', resize);
-    window.addEventListener('resize', resize);
-    return () => {
-      viewport?.removeEventListener('resize', resize);
-      window.removeEventListener('resize', resize);
-      document.documentElement.style.removeProperty('--chat-height');
-      document.documentElement.classList.remove('chat-short', 'chat-tiny');
-    };
-  }, [activeView]);
-  function openSettings(tab: 'personal' | 'ai' | 'data') {
-    setBackupCheckAt(Date.now());
-    setSettingsTab(tab);
-    setShowSettings(true);
-    setMobileNavOpen(false);
-  }
-  function undoDeletion() {
-    try {
-      applyState(restoreEntry(workspaceState, undoDelete));
-      setUndoDelete('');
-      setToast('已撤销删除');
-    } catch (e) {
-      setToast(e instanceof Error ? e.message : '恢复失败，请查看回收站');
-    }
-  }
-  function openSearchHit(hit: SearchHit) {
-    setSearchOpen(false);
-    go(hit.view, {
-      course: hit.courseId,
-      note: hit.note,
-      file: hit.file,
-      session: hit.session,
-    });
-    if (hit.task) {
-      setTaskQuery('');
-      setExpandedTask(hit.task);
-      setTimeout(
-        () =>
-          document
-            .getElementById(`task-${hit.task}`)
-            ?.scrollIntoView({ block: 'center' }),
-        100,
-      );
-    }
-  }
-  function undoReview() {
-    if (!reviewUndo) return;
-    const old = reviewUndo.note;
-    setNotes((current) =>
-      current.map((n) =>
-        n.id === old.id
-          ? {
-              ...n,
-              reviewAt: old.reviewAt,
-              reviewCount: old.reviewCount,
-              reviewHistory: old.reviewHistory,
-              mastery: old.mastery,
-            }
-          : n,
-      ),
-    );
-    setReviewIndex(reviewUndo.index);
-    setReviewCorrect(reviewUndo.correct);
-    setReviewAnswer(reviewUndo.answer);
-    setReviewRevealed(true);
-    setReviewUndo(null);
-  }
-  async function manageBackup(backup?: Backup) {
-    if (dataLock.current) throw new Error('另一项数据操作尚未完成');
-    if (syncBlocked.current)
-      throw new Error(
-        '当前存在同步冲突或离线，请先下载本机数据副本，再刷新核对',
-      );
-    if (isSending || uploadProgress || aiLoading)
-      throw new Error('请等待当前上传或 AI 请求完成');
-    dataLock.current = true;
-    setDataBusy(true);
-    try {
-      await saveQueue.current;
-      if (syncBlocked.current) throw new Error('发生同步冲突，请刷新核对');
-      const saved = await fetch('/api/workspace', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          state: workspaceState,
-          revision: revisionRef.current,
-        }),
-      });
-      const savedData = (await saved.json()) as ApiData;
-      if (!saved.ok) {
-        if (saved.status === 409) syncBlocked.current = true;
-        throw new Error(savedData.error || '恢复前保存失败');
-      }
-      revisionRef.current = savedData.revision!;
-      const response = await fetch(
-        '/api/backup',
-        backup
-          ? {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ backup, revision: revisionRef.current }),
-            }
-          : undefined,
-      );
-      if (!response.ok) {
-        if (response.status === 409) syncBlocked.current = true;
-        const data = (await response.json()) as ApiData;
-        throw new Error(data.error || '备份操作失败');
-      }
-      if (backup) {
-        const data = (await response.json()) as ApiData;
-        if (!data.state || data.revision === undefined)
-          throw new Error('恢复结果不完整，请刷新核对');
-        revisionRef.current = data.revision;
-        applyState({ ...data.state, activeView: 'home' });
-        hydrateDrafts(data.state.drafts ?? [], true);
-        setActiveSessionId('');
-        setSelectedMaterialId('');
-        setSelectedNoteId('');
-        setSelectedFiles([]);
-        setViewStack([]);
-        setReviewQueue(null);
-        setDraftNote(null);
-        setSource(null);
-        setNoteCourse('all');
-        setShowSettings(false);
-        history.replaceState(null, '', '#view=home');
-        setToast('完整备份已恢复；恢复前的数据可在设置中下载');
-      } else {
-        download(
-          await response.text(),
-          '课伴完整备份-' + localDate() + '.kbbackup.json',
-          'application/json',
-        );
-        const now = new Date().toISOString();
-        setBackupAt(now);
-        localStorage.setItem('course-companion-last-backup', now);
-        setToast('完整备份已下载，包含附件');
-      }
-      setSyncStatus('saved');
-      setSyncError('');
-    } catch (error) {
-      if (backup) {
-        syncBlocked.current = true;
-        setSyncStatus('offline');
-        setSyncError(
-          '恢复未确认完成，自动保存已暂停。请刷新核对服务端数据后再继续。',
-        );
-      }
-      throw error;
-    } finally {
-      dataLock.current = false;
-      setDataBusy(false);
-    }
-  }
   function applyState(state: Workspace) {
     setCourses(state.courses);
-    setNotes(
-      (state.notes ?? []).map((n) => ({
-        ...n,
-        courseId:
-          n.courseId ?? state.courses.find((c) => c.name === n.course)?.id,
-      })),
-    );
-    setActiveCourseId(state.courseId ?? state.courses[0]?.id ?? '');
+    setReviewPlans(state.reviewPlans ?? []);
+    const restoredCourseId =
+      state.courses.find(
+        (course) => course.id === state.courseId && !course.deletedAt,
+      )?.id ??
+      state.courses.find((course) => !course.deletedAt)?.id ??
+      '';
+    const restoredNotes = (state.notes ?? []).map((n) => ({
+      ...n,
+      courseId:
+        n.courseId ?? state.courses.find((c) => c.name === n.course)?.id,
+    }));
+    setNotes(restoredNotes);
+    // Merely opening a second tab must not write the same state back and
+    // invalidate the first tab's revision before the user has edited anything.
+    loadedState.current = JSON.stringify({
+      courses: state.courses,
+      notes: restoredNotes,
+      reviewPlans: state.reviewPlans ?? [],
+      courseId: restoredCourseId,
+      sessionId: state.sessionId ?? '',
+      activeView: state.activeView ?? 'home',
+      preferences: state.preferences ?? DEFAULT_PREFERENCES,
+      model: state.model ?? 'deepseek-v4-flash',
+    });
+    setActiveCourseId(restoredCourseId);
     setActiveSessionId(state.sessionId ?? '');
     setActiveView(state.activeView ?? 'home');
     setPreferences(state.preferences ?? DEFAULT_PREFERENCES);
-    setModel(state.model ?? '');
-    setTasks(state.tasks ?? []);
-    setTrash(state.trash ?? []);
-    setReading(state.reading);
+    setModel(state.model ?? 'deepseek-v4-flash');
   }
+  useEffect(() => {
+    let disposed = false;
+    fetch('/api/ai-settings')
+      .then((response) => (response.ok ? response.json() : null))
+      .then((raw) => {
+        const value = raw as ReturnType<typeof publicAiSettings> | null;
+        if (!disposed && value?.models?.length) setAiSettings(value);
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+    };
+  }, []);
+  useEffect(() => {
+    if (
+      hydrated &&
+      aiSettings &&
+      !aiSettings.models.some((option) => option.id === model)
+    )
+      queueMicrotask(() => setModel(aiSettings.defaultModel));
+  }, [hydrated, aiSettings, model]);
+  useEffect(() => {
+    attachmentBatch.current++;
+  }, [activeCourseId]);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -735,17 +595,19 @@ export default function Home() {
         if (!response.ok) throw new Error('load');
         const state =
           data.state ??
-          JSON.parse(localStorage.getItem('course-companion-state') || 'null');
+          JSON.parse(
+            localStorage.getItem('course-companion-v2-state') || 'null',
+          );
         if (!cancelled && Array.isArray(state?.courses)) {
           applyState(state);
-          hydrateDrafts(state.drafts ?? []);
+          if (!data.state) loadedState.current = '';
           revisionRef.current = data.revision ?? 0;
         }
       } catch {
         syncBlocked.current = true;
         try {
           const local = JSON.parse(
-            localStorage.getItem('course-companion-state') || 'null',
+            localStorage.getItem('course-companion-v2-state') || 'null',
           );
           if (!cancelled && Array.isArray(local?.courses)) applyState(local);
         } catch {
@@ -753,7 +615,7 @@ export default function Home() {
         }
         setSyncStatus('offline');
         setSyncError(
-          '无法连接本机服务，正在使用浏览器暂存副本。请先下载本机数据副本，再刷新重连。',
+          '无法连接本地服务，正在使用浏览器副本。请先下载正文备份，再刷新重连。',
         );
       }
       if (!cancelled) setHydrated(true);
@@ -761,36 +623,34 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [hydrateDrafts]);
+  }, []);
   useEffect(() => {
-    if (!hydrated || !draftsReady) return;
+    if (!hydrated) return;
+    const epoch = persistenceEpoch.current;
     const state = {
-      drafts,
-      courses,
-      notes,
+      courses: allCourses,
+      notes: allNotes,
+      reviewPlans,
       courseId: activeCourseId,
       sessionId: activeSessionId,
       activeView,
       preferences,
       model,
-      tasks,
-      trash,
-      reading,
     };
     try {
-      localStorage.setItem('course-companion-state', JSON.stringify(state));
+      localStorage.setItem('course-companion-v2-state', JSON.stringify(state));
     } catch {
       queueMicrotask(() =>
-        setSyncError('本机备份空间不足，请下载本机数据副本。'),
+        setSyncError('浏览器备份空间不足，请下载正文备份。'),
       );
     }
-    if (syncBlocked.current || dataLock.current) return;
-    const saveVersion = ++saveVersionRef.current;
-    queueMicrotask(() => setSyncStatus('saving'));
+    if (syncBlocked.current) return;
+    if (JSON.stringify(state) === loadedState.current) return;
+    loadedState.current = '';
     const timer = setTimeout(() => {
       setSyncStatus('saving');
       saveQueue.current = saveQueue.current.then(async () => {
-        if (syncBlocked.current || dataLock.current) return;
+        if (syncBlocked.current || epoch !== persistenceEpoch.current) return;
         try {
           const response = await fetch('/api/workspace', {
             method: 'PUT',
@@ -802,39 +662,33 @@ export default function Home() {
             if (response.status === 409) syncBlocked.current = true;
             throw new Error(
               response.status === 409
-                ? '另一窗口已更新工作区。请下载本机数据副本后刷新核对。'
+                ? '另一窗口已更新工作区。请下载正文备份后刷新核对。'
                 : data.error || '保存失败',
             );
           }
           revisionRef.current = data.revision ?? revisionRef.current;
-          if (saveVersion === saveVersionRef.current) setSyncStatus('saved');
-          setSavedAt(new Date().toLocaleTimeString());
+          setSyncStatus('saved');
           setSyncError('');
         } catch (error) {
           setSyncStatus('offline');
           setSyncError(
             error instanceof Error
               ? error.message
-              : '保存失败，请下载本机数据副本。',
+              : '保存失败，请下载正文备份。',
           );
         }
       });
     }, 450);
     return () => clearTimeout(timer);
   }, [
-    courses,
-    notes,
+    allCourses,
+    allNotes,
+    reviewPlans,
     activeCourseId,
     activeSessionId,
     activeView,
     preferences,
     model,
-    tasks,
-    trash,
-    reading,
-    dataBusy,
-    drafts,
-    draftsReady,
     hydrated,
   ]);
   useEffect(() => {
@@ -846,6 +700,7 @@ export default function Home() {
         [
           'home',
           'course',
+          'lab',
           'materials',
           'study',
           'knowledge',
@@ -859,7 +714,16 @@ export default function Home() {
         setActiveSessionId(p.get('session') ?? '');
         setSelectedMaterialId(p.get('file') ?? '');
         setSelectedNoteId(p.get('note') ?? '');
+        setGuideChapterId(p.get('chapter') ?? '');
         if (view === 'knowledge') {
+          setNoteCollection(
+            p.get('collection') === 'trash'
+              ? 'trash'
+              : p.get('collection') === 'starred'
+                ? 'starred'
+                : 'all',
+          );
+          setEditingNote(false);
           setNoteCourse(p.get('filter') ?? 'all');
           setNoteQuery('');
           setNoteChapter('');
@@ -876,8 +740,13 @@ export default function Home() {
     return () => window.removeEventListener('popstate', readRoute);
   }, [hydrated, courses]);
   useEffect(() => {
-    document.title = `${preferences.brandName} · ${activeView === 'home' ? '今日学习' : activeView === 'graph' ? '知识图谱' : activeView === 'knowledge' ? '全部笔记' : activeCourse.name}`;
-  }, [preferences.brandName, activeView, activeCourse.name]);
+    document.title = `${preferences.brandName} · ${activeView === 'home' ? '今日学习' : activeView === 'graph' ? '知识图谱' : activeView === 'review' ? '复习计划' : activeView === 'knowledge' ? noteCollectionLabel : activeCourse.name}`;
+  }, [
+    preferences.brandName,
+    activeView,
+    activeCourse.name,
+    noteCollectionLabel,
+  ]);
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ block: 'nearest' });
   }, [activeSession?.messages.length, isSending]);
@@ -887,6 +756,17 @@ export default function Home() {
       return () => clearTimeout(timer);
     }
   }, [toast]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        if (document.querySelector('dialog[open]') && !showSearch) return;
+        event.preventDefault();
+        setShowSearch((open) => !open);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [showSearch]);
   function go(
     view: ViewId,
     opts: {
@@ -895,27 +775,18 @@ export default function Home() {
       file?: string;
       note?: string;
       filter?: string;
+      collection?: 'all' | 'starred' | 'trash';
+      chapter?: string;
     } = {},
   ) {
-    setViewStack((stack) => {
-      if (stack.length && stack[stack.length - 1].view === view) return stack;
-      return [
-        ...stack,
-        {
-          view: activeView,
-          course: activeCourseId,
-          session: activeSessionId,
-          file: selectedMaterialId,
-          note: selectedNoteId,
-          filter: noteCourse,
-        },
-      ].slice(-50);
-    });
     setActiveView(view);
-    setSessionsOpen(false);
     setMobileNavOpen(false);
     setEditingNote(false);
+    if (view === 'course') setGuideChapterId(opts.chapter ?? '');
     if (opts.course) {
+      if (opts.course !== activeCourseId) {
+        setQuestionImages([]);
+      }
       setActiveCourseId(opts.course);
       setSelectedMaterialId(opts.file ?? '');
       setActiveSessionId(opts.session ?? '');
@@ -925,6 +796,7 @@ export default function Home() {
     if (opts.session !== undefined) setActiveSessionId(opts.session);
     if (opts.file) setSelectedMaterialId(opts.file);
     if (view === 'knowledge') {
+      setNoteCollection(opts.collection ?? 'all');
       setNoteCourse(opts.filter ?? 'all');
       setNoteQuery('');
       setNoteChapter('');
@@ -939,284 +811,14 @@ export default function Home() {
     if (opts.session) params.set('session', opts.session);
     if (opts.file) params.set('file', opts.file);
     if (opts.note) params.set('note', opts.note);
+    if (opts.chapter) params.set('chapter', opts.chapter);
     if (opts.filter) params.set('filter', opts.filter);
-    history.pushState(null, '', `#${params}`);
-  }
-  function goBack() {
-    if (!viewStack.length) return;
-    const prev = viewStack[viewStack.length - 1];
-    setViewStack(viewStack.slice(0, -1));
-    setActiveView(prev.view);
-    if (prev.course) setActiveCourseId(prev.course);
-    setActiveSessionId(prev.session);
-    setSelectedMaterialId(prev.file);
-    setSelectedNoteId(prev.note);
-    setNoteCourse(prev.filter || 'all');
-    if (prev.view === 'knowledge') {
-      setNoteQuery('');
-      setNoteChapter('');
-      setNoteTag('');
-      setReviewOnly(false);
-    }
-    const params = new URLSearchParams({
-      view: prev.view,
-      course: prev.course || activeCourseId,
-    });
-    if (prev.session) params.set('session', prev.session);
-    if (prev.file) params.set('file', prev.file);
-    if (prev.note) params.set('note', prev.note);
-    if (prev.filter) params.set('filter', prev.filter);
+    if (opts.collection && opts.collection !== 'all')
+      params.set('collection', opts.collection);
     history.pushState(null, '', `#${params}`);
   }
   function updateCourse(id: string, update: (course: Course) => Course) {
     setCourses((current) => current.map((c) => (c.id === id ? update(c) : c)));
-  }
-  function changeChapter(courseId: string, oldName: string, newName: string) {
-    const course = courses.find((c) => c.id === courseId);
-    if (!course) return;
-    updateCourse(courseId, (c) => ({
-      ...c,
-      chapters: [
-        ...new Set([
-          ...(c.chapters ?? []).filter((name) => name !== oldName),
-          ...(newName ? [newName] : []),
-        ]),
-      ],
-      materials: c.materials.map((m) =>
-        m.chapter === oldName ? { ...m, chapter: newName } : m,
-      ),
-    }));
-    setNotes((current) =>
-      current.map((n) =>
-        (n.courseId ? n.courseId === courseId : n.course === course.name) &&
-        n.chapter === oldName
-          ? { ...n, chapter: newName, updatedAt: new Date().toISOString() }
-          : n,
-      ),
-    );
-    if (materialChapter === oldName) setMaterialChapter(newName);
-    if (noteChapter === oldName) setNoteChapter(newName);
-  }
-  function saveRecord(event: { preventDefault(): void }) {
-    event.preventDefault();
-    if (!recordEdit) return;
-    const entry = recordEdit;
-    const title = entry.title.trim();
-    if (!title) {
-      setRecordError('名称或内容不能为空');
-      return;
-    }
-    if (entry.kind === 'chapter') {
-      if (title !== entry.id && activeChapters.includes(title)) {
-        setRecordError('该章节名称已存在');
-        return;
-      }
-      changeChapter(entry.courseId, entry.id, title);
-    } else if (entry.kind === 'session') {
-      updateSession(entry.courseId, entry.id, (s) => ({
-        ...s,
-        title,
-        updatedAt: new Date().toISOString(),
-      }));
-    } else if (entry.kind === 'message') {
-      updateSession(entry.courseId, entry.id, (s) => ({
-        ...s,
-        messages: s.messages.map((m, i) =>
-          i === entry.index ? { ...m, text: title } : m,
-        ),
-        updatedAt: new Date().toISOString(),
-      }));
-    } else if (entry.kind === 'material') {
-      const course = courses.find((c) => c.id === entry.courseId);
-      const material = course?.materials.find(
-        (m) => materialKey(m) === entry.id,
-      );
-      if (
-        !material?.fileId &&
-        course?.materials.some(
-          (m) => materialKey(m) !== entry.id && m.name === title,
-        )
-      ) {
-        setRecordError('该资料名称已存在');
-        return;
-      }
-      updateCourse(entry.courseId, (c) => ({
-        ...c,
-        materials: c.materials.map((m) =>
-          materialKey(m) === entry.id ? { ...m, name: title } : m,
-        ),
-      }));
-      if (material && !material.fileId) {
-        setSelectedMaterialId(title);
-        setSelectedFiles((current) =>
-          current.map((id) => (id === entry.id ? title : id)),
-        );
-      }
-    } else {
-      setTasks((current) =>
-        current.map((task) =>
-          task.id === entry.id
-            ? {
-                ...task,
-                title,
-                content: entry.content?.trim(),
-                kind: entry.taskKind ?? 'learn',
-                courseId: entry.courseId || undefined,
-                date: entry.date || undefined,
-              }
-            : task,
-        ),
-      );
-    }
-    setRecordEdit(null);
-    setRecordError('');
-    setToast('修改已保存');
-  }
-  function recycleItem(
-    kind: 'task' | 'session' | 'material',
-    id: string,
-    ownerId?: string,
-  ) {
-    const owner = courses.find((c) => c.id === ownerId);
-    const task = tasks.find((t) => t.id === id);
-    const session = owner?.sessions.find((t) => t.id === id);
-    const material = owner?.materials.find((t) => materialKey(t) === id);
-    const item: TrashEntry = {
-      id: crypto.randomUUID(),
-      kind,
-      ownerId,
-      deletedAt: new Date().toISOString(),
-      title:
-        kind === 'task'
-          ? task!.title
-          : kind === 'session'
-            ? session!.title
-            : material!.name,
-      notes: [],
-      tasks: kind === 'task' ? [task!] : [],
-      links: [],
-      session: kind === 'session' ? session : undefined,
-      material: kind === 'material' ? material : undefined,
-    };
-    setTrash((current) => [...current, item]);
-    setUndoDelete(item.id);
-  }
-  function deleteRecord() {
-    if (!recordDelete) return;
-    const entry = recordDelete;
-    if (entry.kind === 'chapter') changeChapter(entry.courseId, entry.id, '');
-    else if (entry.kind === 'task') {
-      recycleItem('task', entry.id);
-      removeTask(entry.id);
-      if (editingTaskId === entry.id) setEditingTaskId(null);
-      if (expandedTask === entry.id) setExpandedTask(null);
-    } else if (entry.kind === 'message') {
-      updateSession(entry.courseId, entry.id, (s) => ({
-        ...s,
-        messages: s.messages.filter((_, i) => i !== entry.index),
-        updatedAt: new Date().toISOString(),
-      }));
-    } else {
-      recycleItem('session', entry.id, entry.courseId);
-      updateCourse(entry.courseId, (c) => ({
-        ...c,
-        sessions: c.sessions.filter((s) => s.id !== entry.id),
-      }));
-      setViewStack((stack) => stack.filter((v) => v.session !== entry.id));
-      if (activeSessionId === entry.id) {
-        setActiveSessionId('');
-        history.replaceState(
-          null,
-          '',
-          `#${new URLSearchParams({ view: 'study', course: entry.courseId })}`,
-        );
-      }
-    }
-    setRecordDelete(null);
-    setToast(
-      entry.kind === 'chapter'
-        ? '章节已删除，原资料和笔记已归入未分类'
-        : '已删除',
-    );
-  }
-  function removeNotes(ids: Set<string>) {
-    setNotes((current) =>
-      current
-        .filter((note) => !ids.has(note.id))
-        .map((note) => ({
-          ...note,
-          relatedIds: note.relatedIds?.filter((id) => !ids.has(id)),
-          relatedLabels:
-            note.relatedLabels &&
-            Object.fromEntries(
-              Object.entries(note.relatedLabels).filter(([id]) => !ids.has(id)),
-            ),
-        })),
-    );
-    setReviewQueue(null);
-    setReviewIndex(0);
-    if (ids.has(selectedNoteId)) {
-      setSelectedNoteId('');
-      setEditingNote(false);
-    }
-    setViewStack((stack) => stack.filter((entry) => !ids.has(entry.note)));
-  }
-  function removeNote() {
-    if (!pendingNoteDelete) return;
-    const entry = recycleEntry(workspaceState, 'note', pendingNoteDelete.id);
-    setUndoDelete(entry.id);
-    setTrash((current) => [entry, ...current]);
-    removeNotes(new Set([pendingNoteDelete.id]));
-    setPendingNoteDelete(null);
-    history.replaceState(
-      null,
-      '',
-      `#${new URLSearchParams({ view: 'knowledge', filter: noteCourse })}`,
-    );
-    setToast('笔记已移入回收站，可在设置中恢复');
-  }
-  function removeCourse() {
-    if (!pendingCourseDelete) return;
-    const entry = recycleEntry(
-      workspaceState,
-      'course',
-      pendingCourseDelete.id,
-    );
-    setUndoDelete(entry.id);
-    setTrash((current) => [entry, ...current]);
-    const removed = pendingCourseDelete;
-    const remaining = courses.filter((course) => course.id !== removed.id);
-    const ids = new Set(
-      notes
-        .filter((note) =>
-          note.courseId
-            ? note.courseId === removed.id
-            : note.course === removed.name,
-        )
-        .map((note) => note.id),
-    );
-    removeNotes(ids);
-    setCourses(remaining);
-    setTasks((current) =>
-      current.filter((task) => task.courseId !== removed.id),
-    );
-    setActiveCourseId(remaining[0]?.id ?? '');
-    setActiveSessionId('');
-    setSelectedMaterialId('');
-    setSelectedFiles([]);
-    setMaterialChapter('');
-    setMaterialQuery('');
-    setNoteCourse('all');
-    setNoteChapter('');
-    setTaskCourseId('');
-    setQuestion('');
-    setChatError('');
-    setSource(null);
-    setActiveView('home');
-    setViewStack([]);
-    setPendingCourseDelete(null);
-    history.replaceState(null, '', '#view=home');
-    setToast('课程及其笔记、对话和学习任务已移入回收站');
   }
   function updateSession(
     courseId: string,
@@ -1254,154 +856,346 @@ export default function Home() {
     }));
     go('study', { session: id });
     setQuestion('');
+    setQuestionImages([]);
     setChatError('');
   }
-  function addCourse(event: { preventDefault(): void }) {
-    event.preventDefault();
-    const name = courseName.trim();
-    if (!name) {
-      setToast('请输入课程名称');
-      return;
-    }
+  function addCourse(name: string, guide?: CourseGuide, upload = false) {
+    if (!name.trim()) return;
     const course: Course = {
       id: crypto.randomUUID(),
-      name: name.slice(0, 60),
+      name: name.trim(),
       code: '',
       materials: [],
       sessions: [],
       graphFocus: '',
       chapters: [],
+      ...(guide ? { guide } : {}),
     };
     setCourses((current) => [...current, course]);
     setNewCourseOpen(false);
-    setCourseName('');
-    go('materials', { course: course.id });
+    go(upload ? 'materials' : 'course', { course: course.id });
+    setToast(guide ? '课程与导览已创建' : '课程已创建');
   }
-  function addTask(event: { preventDefault(): void }) {
-    event.preventDefault();
-    const title = taskTitle.trim();
-    if (!title) {
-      setToast('请输入任务名称');
+  function noteFromGuide(chapter: GuideChapter) {
+    const existing = courseNotes.find(
+      (note) => note.guideChapterId === chapter.id,
+    );
+    if (existing) {
+      openNote(existing);
       return;
     }
-    const content = taskContent.trim();
-    setTasks((current) => [
-      ...current,
-      {
-        id: crypto.randomUUID(),
-        title: title.slice(0, 100),
-        kind: taskKind,
-        courseId: taskCourseId || undefined,
-        date: taskDate || undefined,
-        status: 'todo',
-        content: content || undefined,
-        createdAt: new Date().toISOString(),
-      },
-    ]);
-    setTaskTitle('');
-    setTaskDate('');
-    setTaskContent('');
-    setToast('任务已添加');
-  }
-  function startEditTask(task: StudyTask) {
-    setEditingTaskId(task.id);
-    setEditContent(task.content ?? '');
-  }
-  function saveEditTask(id: string) {
-    const content = editContent.trim();
-    setTasks((current) =>
-      current.map((x) =>
-        x.id === id ? { ...x, content: content || undefined } : x,
+    const now = new Date().toISOString();
+    setDraftOrigin(null);
+    setDraftNote({
+      id: crypto.randomUUID(),
+      title: chapter.title,
+      text: chapterToMarkdown(
+        activeCourse.name,
+        chapter,
+        activeCourse.guide?.source ?? 'manual',
       ),
+      course: activeCourse.name,
+      courseId: activeCourse.id,
+      createdAt: now,
+      updatedAt: now,
+      chapter: chapter.title,
+      tags: ['课程导览'],
+      sources: chapter.lesson?.evidence ?? [],
+      guideChapterId: chapter.id,
+    });
+  }
+  function saveChapterLesson(
+    courseId: string,
+    chapterId: string,
+    lesson: ChapterLesson,
+    expectedSourceKey?: string,
+  ) {
+    updateCourse(courseId, (current) =>
+      current.deletedAt
+        ? current
+        : {
+            ...current,
+            guide: saveLessonToGuide(
+              current.guide,
+              current.name,
+              chapterId,
+              lesson,
+              expectedSourceKey,
+            ),
+          },
     );
-    setEditingTaskId(null);
-    setToast('任务内容已更新');
   }
-  function toggleTask(id: string) {
-    setTasks((current) =>
-      current.map((t) =>
-        t.id === id
-          ? { ...t, status: t.status === 'todo' ? 'done' : 'todo' }
-          : t,
-      ),
-    );
-  }
-  function removeTask(id: string) {
-    setTasks((current) => current.filter((t) => t.id !== id));
-  }
-  async function generatePlans() {
-    if (aiLoading) return;
-    setAiLoading(true);
+  async function syncNewLessons() {
     try {
-      const today = localDate();
-      const horizon = new Date();
-      horizon.setDate(horizon.getDate() + 3);
-      const response = await fetch('/api/plans', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model,
-          dueCount: dueNotes.length,
-          upcomingCount: notes.filter(
-            (n) =>
-              n.reviewAt &&
-              n.reviewAt > today &&
-              n.reviewAt <= localDate(horizon),
-          ).length,
-          courses: courses.map((c) => ({
-            name: c.name,
-            materialCount: c.materials.filter((m) => m.fileId).length,
-            noteCount: notes.filter((n) => n.courseId === c.id).length,
-          })),
-          tasks: tasks
-            .filter((t) => t.status === 'todo')
-            .map((t) => ({
-              title: t.title,
-              kind: t.kind,
-              date: t.date ?? null,
-            })),
+      const response = await fetch('/api/workspace');
+      const latest = (await response.json()) as ApiData;
+      if (!response.ok || !latest.state || latest.revision === undefined)
+        throw new Error('暂时无法读取最新内容，请稍后重试。');
+      let count = 0;
+      const merged: Workspace = {
+        ...latest.state,
+        courses: latest.state.courses.map((current) => {
+          if (current.deletedAt || !current.guide || current.guide.deletedAt)
+            return current;
+          const local = allCourses.find((item) => item.id === current.id);
+          let guide = current.guide;
+          for (const chapter of local?.guide?.chapters ?? []) {
+            if (
+              !chapter.lesson ||
+              chapter.lesson.deletedAt ||
+              guide.chapters.find((item) => item.id === chapter.id)?.lesson
+            )
+              continue;
+            const updated = saveLessonToGuide(
+              guide,
+              current.name,
+              chapter.id,
+              chapter.lesson,
+              chapter.lesson.sourceKey,
+            );
+            if (updated && updated !== guide) {
+              guide = updated;
+              count++;
+            }
+          }
+          return { ...current, guide };
         }),
-      });
-      const data = (await response.json()) as {
-        suggestions?: Array<{ title: string; reason: string }>;
-        error?: string;
       };
-      if (!response.ok) {
-        setToast(
-          response.status === 503
-            ? '未配置 AI 服务，已使用数据建议'
-            : data.error || '建议生成失败，已使用数据建议',
-        );
+      if (!count) {
+        setToast('没有可安全合并的新讲解；请保留正文备份后刷新核对。');
         return;
       }
-      setAiSuggestions(
-        (data.suggestions ?? []).map((s) => `${s.title}：${s.reason}`),
-      );
-      setToast('AI 建议已生成');
-    } catch {
-      setToast('建议生成失败，已使用数据建议');
-    } finally {
-      setAiLoading(false);
+      const saved = await fetch('/api/workspace', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ state: merged, revision: latest.revision }),
+      });
+      const result = (await saved.json()) as ApiData;
+      if (!saved.ok)
+        throw new Error(result.error || '同步失败，请保留当前页面后重试。');
+      revisionRef.current = result.revision ?? latest.revision;
+      syncBlocked.current = false;
+      applyState(merged);
+      setSyncStatus('saved');
+      setSyncError('');
+      go('course', { course: activeCourse.id });
+      setToast(`已合并 ${count} 章新讲解，其他内容以最新保存版本为准。`);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : '同步失败。');
     }
   }
-  const sortedTasks = tasks
-    .filter((task) =>
-      matchesQuery(
-        taskQuery,
-        task.title,
-        task.content,
-        task.date,
-        courses.find((c) => c.id === task.courseId)?.name,
-        task.kind === 'learn' ? '学习' : '复习',
-        task.status === 'done' ? '已完成' : '待完成',
-      ),
-    )
-    .sort((a, b) => {
-      if (a.status !== b.status) return a.status === 'done' ? 1 : -1;
-      const da = a.date ?? '9999-12-31',
-        db = b.date ?? '9999-12-31';
-      return da.localeCompare(db) || a.createdAt.localeCompare(b.createdAt);
+  function askFromGuide(
+    chapter: GuideChapter,
+    concept?: string,
+    suggestedQuestion?: string,
+  ) {
+    if (!activeCourse.guide) return;
+    if (isSending || isImageUploading) {
+      setToast('请等待当前问题处理完成后，再打开章节提问。');
+      return;
+    }
+    const context = makeLearningContext(
+      activeCourse.id,
+      activeCourse.name,
+      activeCourse.guide,
+      chapter,
+      concept,
+    );
+    const existing = activeCourse.sessions.find((session) => {
+      const saved = session.learningContext;
+      return (
+        saved?.chapterId === chapter.id &&
+        saved.concept === concept &&
+        saved.text === context.text
+      );
     });
+    const id = existing?.id ?? crypto.randomUUID();
+    if (!existing)
+      updateCourse(activeCourse.id, (current) => ({
+        ...current,
+        sessions: [
+          {
+            id,
+            title: shortTitle(`${concept || chapter.title} · 讲解提问`),
+            messages: [],
+            updatedAt: new Date().toISOString(),
+            learningContext: context,
+          },
+          ...current.sessions,
+        ],
+      }));
+    go('study', { course: activeCourse.id, session: id });
+    setQuestion(
+      suggestedQuestion ||
+        `请结合这段讲解，帮我理解「${concept || chapter.title}」，再举一个简单的例子。`,
+    );
+    setQuestionImages([]);
+    setChatError('');
+  }
+  function removeManagedItem() {
+    if (!pendingRemoval) return;
+    const target = pendingRemoval;
+    const course = allCourses.find((item) => item.id === target.courseId);
+    if (!course) return;
+    const now = new Date().toISOString();
+    if (target.kind === 'chapter') {
+      const removed = removeChapter(course, allNotes, target.title, now);
+      updateCourse(course.id, () => removed.course);
+      setNotes(removed.notes);
+    } else if (target.kind === 'guide') {
+      updateCourse(course.id, (current) => ({
+        ...current,
+        removedGuides: current.guide
+          ? [
+              ...(current.removedGuides ?? []),
+              {
+                id: crypto.randomUUID(),
+                guide: { ...current.guide, deletedAt: now },
+              },
+            ]
+          : current.removedGuides,
+        guide: undefined,
+      }));
+    } else if (target.kind === 'session') {
+      updateSession(course.id, target.sessionId!, (session) => ({
+        ...session,
+        deletedAt: now,
+      }));
+      if (activeSessionId === target.sessionId) go('study', { session: '' });
+    } else {
+      updateSession(course.id, target.sessionId!, (session) => ({
+        ...session,
+        messages: session.messages.map((message, index) =>
+          index === target.index ? { ...message, deletedAt: now } : message,
+        ),
+      }));
+    }
+    setPendingRemoval(null);
+    setToast('已移入回收站，可以随时恢复。');
+  }
+  function courseTrashItems(course: Course): CourseTrashItem[] {
+    const items: CourseTrashItem[] = [];
+    for (const session of course.sessions) {
+      if (session.deletedAt)
+        items.push({
+          id: `session-${session.id}`,
+          kind: '对话',
+          title: session.title,
+          onRestore: () => {
+            updateSession(course.id, session.id, (current) => ({
+              ...current,
+              deletedAt: undefined,
+            }));
+            setToast('对话已恢复');
+          },
+        });
+      else
+        session.messages.forEach((message, index) => {
+          if (message.deletedAt)
+            items.push({
+              id: `message-${session.id}-${index}`,
+              kind: '消息',
+              title: `${session.title} · ${message.text.slice(0, 45)}`,
+              onRestore: () => {
+                updateSession(course.id, session.id, (current) => ({
+                  ...current,
+                  messages: current.messages.map((entry, position) =>
+                    position === index
+                      ? { ...entry, deletedAt: undefined }
+                      : entry,
+                  ),
+                }));
+                setToast('消息已恢复');
+              },
+            });
+        });
+    }
+    for (const material of course.materials)
+      if (material.deletedAt)
+        items.push({
+          id: `material-${materialKey(material)}`,
+          kind: '资料',
+          title: material.name,
+          onRestore: () => {
+            updateCourse(course.id, (current) => ({
+              ...current,
+              materials: current.materials.map((entry) =>
+                materialKey(entry) === materialKey(material)
+                  ? { ...entry, deletedAt: undefined }
+                  : entry,
+              ),
+            }));
+            setToast('资料已恢复');
+          },
+        });
+    if (course.guide?.deletedAt)
+      items.push({
+        id: 'guide',
+        kind: '导览',
+        title: `${course.name} · 课程导览`,
+        onRestore: () => {
+          updateCourse(course.id, (current) => ({
+            ...current,
+            guide: { ...current.guide!, deletedAt: undefined },
+          }));
+          setToast('课程导览已恢复');
+        },
+      });
+    for (const entry of course.removedGuides ?? [])
+      items.push({
+        id: `guide-${entry.id}`,
+        kind: '导览',
+        title: `${entry.guide.generatedFor} · ${timeLabel(entry.guide.deletedAt!)}`,
+        onRestore: () => {
+          if (course.guide && !course.guide.deletedAt) {
+            setToast('已有课程导览，请先将当前导览移入回收站，再恢复这一版。');
+            return;
+          }
+          updateCourse(course.id, (current) => ({
+            ...current,
+            guide: { ...entry.guide, deletedAt: undefined },
+            removedGuides: current.removedGuides?.filter(
+              (item) => item.id !== entry.id,
+            ),
+          }));
+          setToast('课程导览已恢复');
+        },
+      });
+    for (const chapter of course.guide?.deletedAt
+      ? []
+      : (course.guide?.chapters ?? [])) {
+      if (chapter.lesson?.deletedAt)
+        items.push({
+          id: `lesson-${chapter.id}`,
+          kind: '讲解',
+          title: `${chapter.title} · 章节讲解`,
+          onRestore: () => {
+            saveChapterLesson(course.id, chapter.id, {
+              ...chapter.lesson!,
+              deletedAt: undefined,
+            });
+            setToast('章节讲解已恢复');
+          },
+        });
+    }
+    for (const chapter of course.removedChapters ?? [])
+      items.push({
+        id: `chapter-${chapter.id}`,
+        kind: '章节',
+        title: chapter.title,
+        onRestore: () => {
+          try {
+            const restored = restoreChapter(course, allNotes, chapter.id);
+            updateCourse(course.id, () => restored.course);
+            setNotes(restored.notes);
+            setToast('章节已恢复');
+          } catch (error) {
+            setToast(error instanceof Error ? error.message : '恢复失败');
+          }
+        },
+      });
+    return items;
+  }
   async function addMaterials(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
@@ -1424,7 +1218,7 @@ export default function Home() {
         if (!response.ok || !data.id) throw new Error(data.error || '上传失败');
         let extracted: { passages: Passage[]; coverage: Coverage } | undefined;
         try {
-          extracted = await extractText(file, false, setUploadProgress);
+          extracted = await extractText(file);
         } catch {
           errors.push(`${file.name}：原文件已保存，文字提取失败，可重新解析。`);
         }
@@ -1451,7 +1245,52 @@ export default function Home() {
     if (errors.length) setUploadError(errors.join('\n'));
     else setToast(`${files.length} 份资料已加入课程`);
   }
-  async function reparse(material: Material, ocr = false) {
+  async function addQuestionImages(event: ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    event.target.value = '';
+    if (!files.length) return;
+    if (files.length + questionImages.length > 3) {
+      setChatError('每条消息最多添加 3 张图片。');
+      return;
+    }
+    if (
+      files.some(
+        (file) =>
+          !['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(
+            file.type,
+          ) || file.size > 5 * 1024 * 1024,
+      )
+    ) {
+      setChatError('请选择 5 MB 以内的 PNG、JPEG、WebP 或 GIF 图片。');
+      return;
+    }
+    const batch = attachmentBatch.current;
+    setIsImageUploading(true);
+    setChatError('');
+    try {
+      for (const file of files) {
+        const form = new FormData();
+        form.append('file', file);
+        const response = await fetch('/api/files', {
+          method: 'POST',
+          body: form,
+        });
+        const data = (await response.json()) as ApiData;
+        if (!response.ok || !data.id)
+          throw new Error(data.error || '图片保存失败。');
+        if (attachmentBatch.current === batch)
+          setQuestionImages((current) => [
+            ...current,
+            { fileId: data.id!, name: file.name.slice(0, 200) },
+          ]);
+      }
+    } catch (error) {
+      setChatError(error instanceof Error ? error.message : '添加图片失败。');
+    } finally {
+      setIsImageUploading(false);
+    }
+  }
+  async function reparse(material: Material) {
     if (!material.fileId) return;
     const courseId = activeCourse.id;
     setUploadProgress(`重新读取 · ${material.name}`);
@@ -1463,8 +1302,6 @@ export default function Home() {
       if (!response.ok) throw new Error('无法读取原文件');
       const data = await extractText(
         new File([await response.blob()], material.name),
-        ocr,
-        setUploadProgress,
       );
       updateCourse(courseId, (c) => ({
         ...c,
@@ -1491,30 +1328,29 @@ export default function Home() {
   function removeMaterial() {
     if (!pendingDelete) return;
     const removed = pendingDelete;
-    recycleItem('material', materialKey(removed), activeCourse.id);
     updateCourse(activeCourse.id, (c) => ({
       ...c,
-      materials: c.materials.filter(
-        (m) => materialKey(m) !== materialKey(removed),
+      materials: c.materials.map((m) =>
+        materialKey(m) === materialKey(removed)
+          ? { ...m, deletedAt: new Date().toISOString() }
+          : m,
       ),
     }));
-    setSelectedFiles((current) =>
-      current.filter((id) => id !== materialKey(removed)),
-    );
-    if (selectedMaterialId === materialKey(removed)) setSelectedMaterialId('');
     setPendingDelete(null);
-    setToast('资料已移入回收站，原文链接仍可使用，可撤销删除。');
+    setToast('资料已移入课程回收站，可恢复。原文引用仍可使用。');
   }
   async function submitQuestion(event?: { preventDefault(): void }) {
     event?.preventDefault();
-    const trimmed = question.trim();
-    if (!trimmed || chatAbort.current || !activeCourse.id) return;
-    const controller = new AbortController();
-    chatAbort.current = controller;
+    const trimmed =
+      question.trim() ||
+      (questionImages.length ? '请解释图片中的课程知识或题目。' : '');
+    if (!trimmed || isSending || isImageUploading) return;
+    const sentImages = questionImages;
     const courseId = activeCourse.id,
       sessionId = activeSession?.id ?? crypto.randomUUID(),
-      previous = activeSession?.messages ?? [];
-    const user: Message = { role: 'user', text: trimmed };
+      historyMessages = (activeSession?.messages ?? []).filter(
+        (message) => !message.deletedAt,
+      );
     if (!activeSession)
       updateCourse(courseId, (c) => ({
         ...c,
@@ -1522,7 +1358,7 @@ export default function Home() {
           {
             id: sessionId,
             title: shortTitle(trimmed),
-            messages: [user],
+            messages: [{ role: 'user', text: trimmed, images: sentImages }],
             updatedAt: new Date().toISOString(),
           },
           ...c.sessions,
@@ -1531,109 +1367,120 @@ export default function Home() {
     else
       updateSession(courseId, sessionId, (s) => ({
         ...s,
-        messages: [...s.messages, user],
+        title: s.title === '新学习对话' ? shortTitle(trimmed) : s.title,
+        messages: [
+          ...s.messages,
+          { role: 'user', text: trimmed, images: sentImages },
+        ],
         updatedAt: new Date().toISOString(),
       }));
     setActiveSessionId(sessionId);
     setQuestion('');
-    setChatError('');
+    setQuestionImages([]);
     setIsSending(true);
-    let received: ApiData | undefined;
-    const append = (incomplete: boolean) => {
-      if (received?.answer)
+    setChatError('');
+    const abort = new AbortController();
+    chatController.current = abort;
+    setStreamText('');
+    setStreamTarget(`${courseId}/${sessionId}`);
+    setStreamStatus('正在连接…');
+    let partial = '';
+    let liveEvidence: Evidence[] = [];
+    try {
+      const response = await fetch('/api/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'text/event-stream',
+        },
+        signal: abort.signal,
+        body: JSON.stringify({
+          semantic: semanticSearch,
+          question: trimmed,
+          history: historyMessages.map(({ role, text, images }) => ({
+            role,
+            content: text,
+            images,
+          })),
+          course: activeCourse.name,
+          model,
+          contexts: contextMaterials,
+          images: sentImages,
+          learningContext: activeSession?.learningContext,
+        }),
+      });
+      if (!response.ok || !response.body) throw new Error('连接失败，请重试。');
+      let data: ApiData | undefined;
+      for await (const raw of readEventStream(response.body)) {
+        const event = JSON.parse(raw);
+        if (event.type === 'status') {
+          setStreamStatus(
+            `${event.text}${event.retrieval ? ` · ${event.retrieval}` : ''}`,
+          );
+          if (Array.isArray(event.evidence)) liveEvidence = event.evidence;
+        }
+        if (event.type === 'delta') {
+          partial += event.text;
+          setStreamText(partial);
+        }
+        if (event.type === 'error')
+          throw new Error(event.error || '生成失败。');
+        if (event.type === 'done') data = event;
+      }
+      if (!data?.answer) throw new Error('回答未完成，连接已中断。');
+      const completed = data;
+      updateSession(courseId, sessionId, (s) => ({
+        ...s,
+        messages: [
+          ...s.messages,
+          {
+            role: 'assistant',
+            text: completed.answer!,
+            evidence: completed.evidence,
+            retrieved: completed.retrieved,
+            scope: completed.scope,
+          },
+        ],
+        updatedAt: new Date().toISOString(),
+      }));
+    } catch (error) {
+      const reason = abort.signal.aborted
+        ? '生成已停止'
+        : error instanceof Error
+          ? error.message
+          : '连接失败';
+      setChatError(
+        reason +
+          (partial ? '，已保留未完成的回答。' : '，可以修改问题后再次发送。'),
+      );
+      if (partial)
         updateSession(courseId, sessionId, (s) => ({
           ...s,
           messages: [
             ...s.messages,
             {
               role: 'assistant',
-              text: received!.answer!,
-              evidence: received!.evidence,
-              retrieved: received!.retrieved,
-              scope: received!.scope,
-              incomplete,
+              text:
+                cleanCitations(partial, liveEvidence) +
+                '\n\n> 回答未完成，请勿当作完整结论。',
+              retrieved: liveEvidence,
+              evidence: liveEvidence.filter((e) =>
+                partial.includes(`[${e.id}]`),
+              ),
             },
           ],
           updatedAt: new Date().toISOString(),
         }));
-    };
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        signal: controller.signal,
-        body: JSON.stringify({
-          stream: true,
-          question: trimmed,
-          history: previous
-            .filter((m) => !m.incomplete)
-            .map((m) => ({ role: m.role, content: m.text })),
-          course: activeCourse.name,
-          model,
-          contexts: contextMaterials,
-        }),
-      });
-      if (!response.ok) {
-        const data = (await response.json()) as ApiData;
-        throw new Error(data.error || '回答失败');
-      }
-      if (
-        response.headers
-          .get('content-type')
-          ?.includes('application/x-ndjson') &&
-        response.body
-      ) {
-        let done = false;
-        for await (const line of readLines(response.body)) {
-          if (controller.signal.aborted)
-            throw new DOMException('Stopped', 'AbortError');
-          if (!line.trim()) continue;
-          const data = JSON.parse(line) as ApiData & { type: string };
-          if (data.type === 'error') throw new Error(data.error || '回答中断');
-          received = data;
-          if (data.type === 'done') done = true;
-          setLiveReply({
-            course: courseId,
-            session: sessionId,
-            message: {
-              role: 'assistant',
-              text: data.answer ?? '',
-              evidence: data.evidence,
-              scope: data.scope,
-            },
-          });
-        }
-        if (!done) throw new Error('回答中断，请重试');
-      } else received = (await response.json()) as ApiData;
-      if (controller.signal.aborted)
-        throw new DOMException('Stopped', 'AbortError');
-      if (!received?.answer) throw new Error('没有收到回答，请重试');
-      append(false);
-    } catch (error) {
-      append(true);
-      setChatError(
-        controller.signal.aborted
-          ? '已停止生成；已有内容标为未完成。'
-          : error instanceof Error
-            ? error.message
-            : '连接失败',
-      );
-      setQuestion((current) => current || trimmed);
-      if (!received?.answer)
-        updateSession(courseId, sessionId, (s) => ({
-          ...s,
-          messages: s.messages.slice(0, -1),
-        }));
     } finally {
-      setLiveReply(null);
+      chatController.current = null;
+      setStreamText('');
       setIsSending(false);
-      chatAbort.current = null;
     }
   }
   function startNote(message?: Message, index?: number) {
     if (!courses.length) {
       setNewCourseOpen(true);
-      setToast('请先添加一门课程，再创建笔记');
+      setToast('先添加一门课程，就可以开始记笔记。');
       return;
     }
     const now = new Date().toISOString(),
@@ -1686,12 +1533,88 @@ export default function Home() {
           i === draftOrigin.index ? { ...m, saved: true } : m,
         ),
       }));
-    discardDraft(draftNote.id);
-    setToast(
-      draftNote.reviewAt ? '笔记已保存，并加入复习' : '笔记已保存，未加入复习',
-    );
-    if (!(activeView === 'materials' && readingSide))
-      go('knowledge', { note: draftNote.id });
+    setDraftNote(null);
+    setToast(draftNote.reviewAt ? '笔记已保存，并加入今日复习' : '笔记已保存');
+    go('knowledge', { note: draftNote.id });
+  }
+  function addDemoCourse() {
+    if (allCourses.some((c) => c.id === 'demo-linear')) {
+      setToast('示例课程已存在，可在课程列表或回收站打开。');
+      return;
+    }
+    const demo = demoWorkspace();
+    setCourses((current) => [...current, ...demo.courses]);
+    setNotes((current) => [...current, ...demo.notes]);
+    setToast('已添加示例课程，阅读、自测和检索验证无需 AI。');
+  }
+  async function exportMigration() {
+    if (syncBlocked.current || isSending)
+      throw new Error('请先完成生成并处理保存提示，再导出。');
+    syncBlocked.current = true;
+    persistenceEpoch.current++;
+    try {
+      await saveQueue.current;
+      const saved = await fetch('/api/workspace', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          state: workspaceState,
+          revision: revisionRef.current,
+        }),
+      });
+      const info = (await saved.json()) as { error?: string; revision: number };
+      if (!saved.ok) throw new Error(info.error || '保存失败，未导出。');
+      revisionRef.current = info.revision;
+      loadedState.current = JSON.stringify(workspaceState);
+      const response = await fetch('/api/backup');
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error || '迁移包导出失败。');
+      setSyncStatus('saved');
+      return data;
+    } finally {
+      syncBlocked.current = false;
+    }
+  }
+  async function restoreMigration(backup: unknown, allowMissing: boolean) {
+    if (syncBlocked.current || isSending)
+      throw new Error('请先处理保存冲突或停止生成，再恢复。');
+    syncBlocked.current = true;
+    persistenceEpoch.current++;
+    try {
+      await saveQueue.current;
+      const response = await fetch('/api/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          backup,
+          allowMissing,
+          revision: revisionRef.current,
+        }),
+      });
+      const data = (await response.json()) as {
+        error?: string;
+        revision: number;
+        state: Workspace;
+      };
+      if (!response.ok) throw new Error(data.error || '恢复失败。');
+      revisionRef.current = data.revision;
+      const state = {
+        ...data.state,
+        activeView: 'home',
+        sessionId: '',
+      } as Workspace;
+      applyState(state);
+      localStorage.setItem('course-companion-v2-state', JSON.stringify(state));
+      setSelectedNoteId('');
+      setQuestion('');
+      setQuestionImages([]);
+      history.replaceState(null, '', '#view=home');
+      setSyncStatus('saved');
+      setSyncError('');
+      setToast('已恢复到增强版，原版保持原样。');
+    } finally {
+      syncBlocked.current = false;
+    }
   }
   function exportNotes() {
     download(
@@ -1705,7 +1628,6 @@ export default function Home() {
     );
   }
   function startReview(ids = dueNotes.map((n) => n.id)) {
-    setReviewUndo(null);
     setReviewQueue(ids);
     setReviewIndex(0);
     setReviewCorrect(0);
@@ -1713,44 +1635,75 @@ export default function Home() {
     setReviewRevealed(false);
     go('review');
   }
-  function gradeReview(rating: 'again' | 'hard' | 'good') {
-    const correct = rating === 'good';
+  function gradeReview(correct: boolean) {
     if (!reviewNote) return;
-    setReviewUndo({
-      note: reviewNote,
-      index: reviewIndex,
-      correct: reviewCorrect,
-      answer: reviewAnswer,
-    });
-    const patch = scheduleReview(reviewNote, rating);
+    const patch = scheduleReview(reviewNote, correct);
     setNotes((current) =>
-      current.map((n) =>
-        n.id === reviewNote.id
-          ? {
-              ...n,
-              ...patch,
-              reviewHistory: [
-                ...(n.reviewHistory ?? []),
-                {
-                  at: new Date().toISOString(),
-                  answer: reviewAnswer.slice(0, 12000),
-                  rating,
-                },
-              ],
-            }
-          : n,
-      ),
+      current.map((n) => (n.id === reviewNote.id ? { ...n, ...patch } : n)),
     );
     setReviewIndex((i) => i + 1);
     setReviewCorrect((c) => c + (correct ? 1 : 0));
     setReviewAnswer('');
     setReviewRevealed(false);
   }
-  function openNote(note: Note) {
-    go('knowledge', { note: note.id });
+  function openNote(note: Note, preserveCollection = false) {
+    if (note.deletedAt) return;
+    setNotes((current) =>
+      current.map((n) =>
+        n.id === note.id ? { ...n, lastOpenedAt: new Date().toISOString() } : n,
+      ),
+    );
+    go('knowledge', {
+      note: note.id,
+      ...(preserveCollection
+        ? { filter: noteCourse, collection: noteCollection }
+        : {}),
+    });
+  }
+  function toggleStar(note: Note) {
+    setNotes((current) =>
+      current.map((n) =>
+        n.id === note.id ? { ...n, starred: !n.starred } : n,
+      ),
+    );
+  }
+  function moveNoteToTrash() {
+    if (!pendingDeleteNote) return;
+    const id = pendingDeleteNote.id;
+    setNotes((current) =>
+      current.map((n) =>
+        n.id === id ? { ...n, deletedAt: new Date().toISOString() } : n,
+      ),
+    );
+    setPendingDeleteNote(null);
+    if (selectedNoteId === id) go('knowledge');
+    setToast('笔记已移入回收站，可以从左侧回收站恢复。');
+  }
+  function restoreNote(note: Note) {
+    setNotes((current) =>
+      current.map((n) =>
+        n.id === note.id ? { ...n, deletedAt: undefined } : n,
+      ),
+    );
+    setToast(`已恢复「${note.title}」及其关联。`);
+  }
+  function moveCourseToTrash() {
+    if (!pendingDeleteCourse) return;
+    const id = pendingDeleteCourse.id;
+    setCourses((current) => trashCourse(current, id));
+    if (activeCourse.id === id) {
+      setActiveCourseId(courses.find((course) => course.id !== id)?.id ?? '');
+      setActiveSessionId('');
+    }
+    setPendingDeleteCourse(null);
+    setReviewQueue(null);
+    setSelectedNoteId('');
+    setDraftNote(null);
+    go('home');
+    setToast('课程已移入回收站，资料、笔记和复习计划均已保留。');
   }
   const noteOwner = (note: Note) =>
-    courses.find(
+    allCourses.find(
       (c) =>
         c.id === note.courseId || (!note.courseId && c.name === note.course),
     );
@@ -1841,8 +1794,8 @@ export default function Home() {
             </div>
           )}
           <p className="muted">
-            按关键词匹配正文；概览问题会选取代表片段，不代表逐页阅读全文。扫描
-            PDF 请先在资料页使用“识别扫描文字”。
+            按关键词匹配正文；概览问题会选取代表片段，不代表逐页阅读全文。扫描版
+            PDF 尚未自动识别，可截取需要的一页添加到提问中。
           </p>
           {contextMaterials.some(
             (m) => !m.coverage || m.coverage.truncated,
@@ -1860,6 +1813,11 @@ export default function Home() {
       .flatMap((c) => c.sessions.map((session) => ({ ...session, course: c })))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const latest = recent[0];
+    const todayTasks = visibleReviewPlans
+      .filter((plan) => !plan.deletedAt)
+      .flatMap((plan) => plan.tasks.map((task) => ({ task, plan })))
+      .filter(({ task }) => task.date <= localDate() && !task.done)
+      .sort((a, b) => a.task.date.localeCompare(b.task.date));
     const resumeTitle =
       latest && /^(你好[！!。]?|介绍|新对话|未命名)$/.test(latest.title.trim())
         ? `${latest.course.name} · 最近对话`
@@ -1871,45 +1829,38 @@ export default function Home() {
             <p className="eyebrow">
               {localDate()} · {preferences.semester}
             </p>
-            <h1>今天，先学一点点</h1>
-            <p className="muted">
-              {notes.length} 条笔记 · {dueNotes.length} 条到期复习
-              {tasks.filter((t) => t.status === 'todo').length > 0
-                ? ` · 学习任务 ${tasks.filter((t) => t.status === 'todo').length} 项`
-                : ''}
-            </p>
+            <h1>
+              今天，先学一点点<span className="heading-dot">。</span>
+            </h1>
+            <p className="muted">把零散的理解，慢慢变成自己的知识。</p>
           </div>
+          <button
+            className="home-plan-entry"
+            onClick={() => {
+              setReviewQueue(null);
+              go('review');
+            }}
+          >
+            <CalendarDays size={17} />
+            制定复习计划
+            <ArrowUpRight size={16} />
+          </button>
         </div>
-        {reading &&
-          courses.some(
-            (c) =>
-              c.id === reading.courseId &&
-              c.materials.some((m) => materialKey(m) === reading.materialKey),
-          ) && (
-            <div className="panel reading-resume">
-              <strong>
-                上次读到：
-                {
-                  courses
-                    .find((c) => c.id === reading.courseId)
-                    ?.materials.find(
-                      (m) => materialKey(m) === reading.materialKey,
-                    )?.name
-                }{' '}
-                · 第 {reading.passage + 1} 段
-              </strong>
-              <button
-                onClick={() =>
-                  go('materials', {
-                    course: reading.courseId,
-                    file: reading.materialKey,
-                  })
-                }
-              >
-                继续阅读
-              </button>
-            </div>
-          )}
+        <div className="home-overview">
+          <span>
+            <strong>{courses.length}</strong> 门正在学习的课
+          </span>
+          <span>
+            <strong>{notes.length}</strong> 篇积累的笔记
+          </span>
+          <span>
+            <strong>
+              {visibleReviewPlans.filter((plan) => !plan.deletedAt).length}
+            </strong>{' '}
+            份复习计划
+          </span>
+          <span className="home-overview-tip">按自己的节奏，一步一步来</span>
+        </div>
         <section className="study-focus">
           <div className="resume">
             <span className="eyebrow">
@@ -1943,7 +1894,7 @@ export default function Home() {
               <ChevronRight size={16} />
             </button>
           </div>
-          <div className={`review-callout ${dueNotes.length ? '' : 'no-due'}`}>
+          <div className="review-callout">
             <h2>
               <CalendarDays size={21} />
               {dueNotes.length
@@ -1964,14 +1915,8 @@ export default function Home() {
             </button>
           </div>
         </section>
-        <div className="section-heading course-list-heading">
+        <div className="section-heading">
           <h2>我的课程</h2>
-          <input
-            aria-label="搜索课程"
-            placeholder="搜索课程、编号或教师"
-            value={courseQuery}
-            onChange={(e) => setCourseQuery(e.target.value)}
-          />
           <button
             className="text-button"
             onClick={() => setNewCourseOpen(true)}
@@ -1981,287 +1926,370 @@ export default function Home() {
           </button>
         </div>
         <div className="course-grid">
-          {courses
-            .filter((course) =>
-              matchesQuery(
-                courseQuery,
-                course.name,
-                course.code,
-                course.teacher,
-                course.semester,
-              ),
-            )
-            .map((course, index) => (
-              <article className="course-card" key={course.id}>
-                <h3 title={course.name}>
-                  <span className={`course-dot tone-${index % 4}`} />
-                  {course.name}
-                </h3>
-                <p>
-                  {course.materials.filter((m) => m.fileId).length} 份资料 ·{' '}
-                  {
-                    notes.filter(
-                      (n) =>
-                        n.courseId === course.id ||
-                        (!n.courseId && n.course === course.name),
-                    ).length
-                  }{' '}
-                  条笔记
-                </p>
-                <div className="actions">
-                  <button
-                    className="danger"
-                    aria-label={`删除课程 ${course.name}`}
-                    title="删除课程"
-                    disabled={isSending || !!uploadProgress}
-                    onClick={() => setPendingCourseDelete(course)}
-                  >
-                    <Trash2 size={17} />
-                    删除课程
-                  </button>
-                  <button
-                    className="text-button"
-                    onClick={() =>
-                      go('study', {
-                        course: course.id,
-                        session: course.sessions[0]?.id,
-                      })
-                    }
-                  >
-                    进入学习
-                    <ChevronRight size={15} />
-                  </button>
-                  <button
-                    className="icon-button"
-                    aria-label={`管理${course.name}资料`}
-                    onClick={() => go('materials', { course: course.id })}
-                  >
-                    <FileText size={17} />
-                  </button>
-                </div>
-              </article>
-            ))}
-        </div>
-        <section className="recent-notes">
-          {!courses.some((course) =>
-            matchesQuery(
-              courseQuery,
-              course.name,
-              course.code,
-              course.teacher,
-              course.semester,
-            ),
-          ) && (
-            <p className="empty">
-              {courses.length
-                ? '没有匹配的课程，请调整搜索条件。'
-                : '还没有课程，点击“添加课程”开始。'}
-            </p>
-          )}
-          <div className="section-heading">
-            <h2>最近笔记</h2>
-            <button className="text-button" onClick={() => go('knowledge')}>
-              全部笔记
-              <ChevronRight size={16} />
-            </button>
-          </div>
-          <div className="list-panel">
-            {notes.length ? (
-              noteRows(
-                [...notes]
-                  .sort((a, b) =>
-                    (b.updatedAt ?? b.createdAt).localeCompare(
-                      a.updatedAt ?? a.createdAt,
-                    ),
-                  )
-                  .slice(0, 4),
-              )
-            ) : (
-              <p className="empty">
-                还没有笔记。在问答中保存解释，或直接新建。
+          {courses.map((course, index) => (
+            <article
+              className={`course-card course-theme-${index % 4}`}
+              key={course.id}
+            >
+              <div className="course-card-top">
+                <span className="course-emblem">
+                  <BookOpen size={21} />
+                </span>
+                <span className="course-card-code">
+                  {course.code ||
+                    `COURSE ${String(index + 1).padStart(2, '0')}`}
+                </span>
+                <button
+                  className="icon-button delete-note-button"
+                  aria-label={`删除课程：${course.name}`}
+                  onClick={() => setPendingDeleteCourse(course)}
+                >
+                  <Trash2 size={16} />
+                </button>
+              </div>
+              <h3>{course.name}</h3>
+              <p>
+                {course.materials.filter((m) => m.fileId).length} 份资料 ·{' '}
+                {
+                  notes.filter(
+                    (n) =>
+                      n.courseId === course.id ||
+                      (!n.courseId && n.course === course.name),
+                  ).length
+                }{' '}
+                条笔记
               </p>
+              <div className="course-mastery">
+                <div>
+                  <span>知识积累</span>
+                  <span>
+                    {
+                      notes.filter(
+                        (note) =>
+                          belongsToCourse(note, course) &&
+                          note.mastery === '已掌握',
+                      ).length
+                    }{' '}
+                    篇已掌握
+                  </span>
+                </div>
+                <progress
+                  aria-label={`${course.name}笔记掌握进度`}
+                  max={Math.max(
+                    1,
+                    notes.filter((note) => belongsToCourse(note, course))
+                      .length,
+                  )}
+                  value={
+                    notes.filter(
+                      (note) =>
+                        belongsToCourse(note, course) &&
+                        note.mastery === '已掌握',
+                    ).length
+                  }
+                />
+              </div>
+              <div className="actions">
+                <button
+                  className="text-button"
+                  onClick={() =>
+                    go('course', {
+                      course: course.id,
+                      session: course.sessions[0]?.id,
+                    })
+                  }
+                >
+                  进入学习
+                  <ChevronRight size={15} />
+                </button>
+                <button
+                  className="icon-button"
+                  aria-label={`管理${course.name}资料`}
+                  onClick={() => go('materials', { course: course.id })}
+                >
+                  <FileText size={17} />
+                </button>
+              </div>
+            </article>
+          ))}
+          {!courses.length && (
+            <div className="empty no-courses">
+              <BookOpen size={26} />
+              <h3>新的学习，从这里开始</h3>
+              <p>课程删除后可以在回收站恢复。</p>
+              <button onClick={() => setNewCourseOpen(true)}>
+                <Plus size={16} />
+                添加课程
+              </button>
+            </div>
+          )}
+        </div>
+        <div className="home-bottom-grid">
+          <section className="recent-notes">
+            <div className="section-heading">
+              <h2>最近笔记</h2>
+              <button className="text-button" onClick={() => go('knowledge')}>
+                全部笔记
+                <ChevronRight size={16} />
+              </button>
+            </div>
+            <div className="list-panel">
+              {notes.length ? (
+                noteRows(
+                  [...notes]
+                    .sort((a, b) =>
+                      (b.updatedAt ?? b.createdAt).localeCompare(
+                        a.updatedAt ?? a.createdAt,
+                      ),
+                    )
+                    .slice(0, 4),
+                )
+              ) : (
+                <p className="empty">
+                  还没有笔记。在问答中保存解释，或直接新建。
+                </p>
+              )}
+            </div>
+          </section>
+          <section className="home-agenda">
+            <div className="section-heading">
+              <h2>今日安排</h2>
+              <span className="agenda-count">{todayTasks.length}</span>
+            </div>
+            {todayTasks.slice(0, 3).map(({ task, plan }) => (
+              <button
+                className="agenda-task"
+                key={task.id}
+                onClick={() => {
+                  setReviewQueue(null);
+                  go('review');
+                }}
+              >
+                <span className="agenda-dot" />
+                <span>
+                  <strong>{task.title}</strong>
+                  <small>
+                    {
+                      courses.find((course) => course.id === plan.courseId)
+                        ?.name
+                    }{' '}
+                    · {task.date < localDate() ? '待补安排' : '今天'} ·{' '}
+                    {task.minutes} 分钟
+                  </small>
+                </span>
+                <ArrowUpRight size={15} />
+              </button>
+            ))}
+            {!todayTasks.length && (
+              <div className="agenda-empty">
+                <Clock3 size={25} />
+                <p>给重要的知识留一点时间</p>
+                <small>安排一次复习，让学过的内容更牢靠。</small>
+              </div>
             )}
-          </div>
-        </section>
+            <button
+              className="text-button"
+              onClick={() => {
+                setReviewQueue(null);
+                go('review');
+              }}
+            >
+              {todayTasks.length ? '查看完整计划' : '制定第一份计划'}
+              <ArrowUpRight size={15} />
+            </button>
+          </section>
+        </div>
       </div>
     );
   }
   function courseView() {
     return (
-      <div className="two-columns course-settings">
-        <section className="panel">
-          <h2>章节组织</h2>
-          <p className="muted">按课程章节归类资料和笔记。</p>
-          <input
-            aria-label="搜索章节"
-            placeholder="搜索章节名称"
-            value={chapterQuery}
-            onChange={(e) => setChapterQuery(e.target.value)}
-          />
-          {activeChapters
-            .filter((chapter) => matchesQuery(chapterQuery, chapter))
-            .map((chapter) => (
-              <div className="chapter-row" key={chapter}>
-                <strong>{chapter}</strong>
-                <div className="actions">
-                  <button
-                    onClick={() => {
-                      setRecordError('');
-                      setRecordEdit({
-                        kind: 'chapter',
-                        id: chapter,
-                        courseId: activeCourse.id,
-                        title: chapter,
-                      });
-                    }}
-                  >
-                    改名
-                  </button>
-                  <button
-                    className="danger"
-                    onClick={() =>
-                      setRecordDelete({
-                        kind: 'chapter',
-                        id: chapter,
-                        courseId: activeCourse.id,
-                        title: chapter,
-                      })
-                    }
-                  >
-                    删除章节
-                  </button>
-                  <button
-                    onClick={() => {
-                      go('materials');
-                      setMaterialChapter(chapter);
-                    }}
-                  >
-                    资料 {materials.filter((m) => m.chapter === chapter).length}
-                  </button>
-                  <button
-                    onClick={() => {
-                      go('knowledge', { filter: activeCourse.id });
-                      setNoteChapter(chapter);
-                    }}
-                  >
-                    笔记{' '}
-                    {courseNotes.filter((n) => n.chapter === chapter).length}
-                  </button>
+      <div className="course-overview-page">
+        <CourseGuidePanel
+          key={activeCourse.id}
+          courseName={activeCourse.name}
+          guide={activeCourse.guide}
+          model={model}
+          initialChapterId={guideChapterId}
+          canGenerate={!syncError && syncStatus !== 'offline'}
+          materials={
+            activeCourse.studyLab?.calibration
+              ? materials.filter((m) =>
+                  activeCourse.studyLab!.calibration!.materialKeys.includes(
+                    materialKey(m),
+                  ),
+                )
+              : materials
+          }
+          onSource={setSource}
+          onSaveLesson={(id, lesson, expectedSourceKey) =>
+            saveChapterLesson(activeCourse.id, id, lesson, expectedSourceKey)
+          }
+          onAsk={askFromGuide}
+          onEdit={() => setGuideEditorId(activeCourse.id)}
+          onUpload={() => go('materials')}
+          onCreateNote={noteFromGuide}
+          onDelete={() =>
+            setPendingRemoval({
+              kind: 'guide',
+              title: `${activeCourse.name} · 课程导览`,
+              courseId: activeCourse.id,
+            })
+          }
+        />
+        <details className="course-settings-details">
+          <summary>
+            <Settings2 size={17} />
+            章节组织与课程设置<span>资料归类、教师、学期与考试日期</span>
+          </summary>
+          <div className="two-columns course-settings">
+            <section className="panel">
+              <h2>章节组织</h2>
+              <p className="muted">按课程章节归类资料和笔记。</p>
+              {activeChapters.map((chapter) => (
+                <div className="chapter-row" key={chapter}>
+                  <strong>{chapter}</strong>
+                  <div className="actions">
+                    <button
+                      onClick={() => {
+                        go('materials');
+                        setMaterialChapter(chapter);
+                      }}
+                    >
+                      资料{' '}
+                      {materials.filter((m) => m.chapter === chapter).length}
+                    </button>
+                    <button
+                      onClick={() => {
+                        go('knowledge', { filter: activeCourse.id });
+                        setNoteChapter(chapter);
+                      }}
+                    >
+                      笔记{' '}
+                      {courseNotes.filter((n) => n.chapter === chapter).length}
+                    </button>
+                    <button
+                      className="icon-button"
+                      aria-label={`删除章节：${chapter}`}
+                      onClick={() =>
+                        setPendingRemoval({
+                          kind: 'chapter',
+                          title: chapter,
+                          courseId: activeCourse.id,
+                        })
+                      }
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          {!activeChapters.length && (
-            <p className="empty">还没有章节，例如“第一章 · 线性空间”。</p>
+              ))}
+              {!activeChapters.length && (
+                <p className="empty">还没有章节，例如“第一章 · 线性空间”。</p>
+              )}
+              <form
+                className="inline-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (
+                    newChapter.trim() &&
+                    !activeChapters.includes(newChapter.trim())
+                  ) {
+                    updateCourse(activeCourse.id, (c) => ({
+                      ...c,
+                      chapters: [...(c.chapters ?? []), newChapter.trim()],
+                    }));
+                    setNewChapter('');
+                  }
+                }}
+              >
+                <input
+                  aria-label="新章节名称"
+                  placeholder="添加章节"
+                  value={newChapter}
+                  onChange={(e) => setNewChapter(e.target.value)}
+                  required
+                />
+                <button type="submit">
+                  <Plus size={17} />
+                  添加
+                </button>
+              </form>
+            </section>
+            <section className="panel form-stack">
+              <h2>课程信息</h2>
+              <label>
+                课程名称
+                <input
+                  value={activeCourse.name}
+                  onChange={(e) =>
+                    updateCourse(activeCourse.id, (c) => ({
+                      ...c,
+                      name: e.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                课程编号
+                <input
+                  value={activeCourse.code}
+                  placeholder="例如 MA201"
+                  onChange={(e) =>
+                    updateCourse(activeCourse.id, (c) => ({
+                      ...c,
+                      code: e.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                授课教师
+                <input
+                  value={activeCourse.teacher ?? ''}
+                  onChange={(e) =>
+                    updateCourse(activeCourse.id, (c) => ({
+                      ...c,
+                      teacher: e.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                开课学期
+                <input
+                  value={activeCourse.semester ?? preferences.semester}
+                  onChange={(e) =>
+                    updateCourse(activeCourse.id, (c) => ({
+                      ...c,
+                      semester: e.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                考试日期
+                <input
+                  type="date"
+                  value={activeCourse.examDate ?? ''}
+                  onChange={(e) =>
+                    updateCourse(activeCourse.id, (c) => ({
+                      ...c,
+                      examDate: e.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <small className="muted">修改后自动保存</small>
+            </section>
+          </div>
+        </details>
+        <CourseRecycleBin
+          name={activeCourse.name}
+          items={courseTrashItems(
+            allCourses.find((course) => course.id === activeCourse.id)!,
           )}
-          {!!activeChapters.length &&
-            !activeChapters.some((chapter) =>
-              matchesQuery(chapterQuery, chapter),
-            ) && <p className="empty">没有匹配的章节。</p>}
-          <form
-            className="inline-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (
-                newChapter.trim() &&
-                !activeChapters.includes(newChapter.trim())
-              ) {
-                updateCourse(activeCourse.id, (c) => ({
-                  ...c,
-                  chapters: [...(c.chapters ?? []), newChapter.trim()],
-                }));
-                setNewChapter('');
-              }
-            }}
-          >
-            <input
-              aria-label="新章节名称"
-              placeholder="添加章节"
-              value={newChapter}
-              onChange={(e) => setNewChapter(e.target.value)}
-              required
-            />
-            <button type="submit">
-              <Plus size={17} />
-              添加
-            </button>
-          </form>
-        </section>
-        <section className="panel form-stack">
-          <h2>课程信息</h2>
-          <label>
-            课程名称
-            <input
-              value={activeCourse.name}
-              maxLength={60}
-              onChange={(e) =>
-                e.target.value.trim() &&
-                updateCourse(activeCourse.id, (c) => ({
-                  ...c,
-                  name: e.target.value,
-                }))
-              }
-            />
-          </label>
-          <label>
-            课程编号
-            <input
-              value={activeCourse.code}
-              placeholder="例如 MA201"
-              onChange={(e) =>
-                updateCourse(activeCourse.id, (c) => ({
-                  ...c,
-                  code: e.target.value,
-                }))
-              }
-            />
-          </label>
-          <label>
-            授课教师
-            <input
-              value={activeCourse.teacher ?? ''}
-              onChange={(e) =>
-                updateCourse(activeCourse.id, (c) => ({
-                  ...c,
-                  teacher: e.target.value,
-                }))
-              }
-            />
-          </label>
-          <label>
-            开课学期
-            <input
-              value={activeCourse.semester ?? preferences.semester}
-              onChange={(e) =>
-                updateCourse(activeCourse.id, (c) => ({
-                  ...c,
-                  semester: e.target.value,
-                }))
-              }
-            />
-          </label>
-          <label>
-            考试日期
-            <input
-              type="date"
-              value={activeCourse.examDate ?? ''}
-              onChange={(e) =>
-                updateCourse(activeCourse.id, (c) => ({
-                  ...c,
-                  examDate: e.target.value,
-                }))
-              }
-            />
-          </label>
-          <small className="muted">修改后自动保存</small>
-          <button
-            className="danger course-settings-delete"
-            disabled={isSending || !!uploadProgress}
-            onClick={() => setPendingCourseDelete(activeCourse)}
-          >
-            <Trash2 size={17} />
-            删除课程
-          </button>
-        </section>
+        />
       </div>
     );
   }
@@ -2269,13 +2297,7 @@ export default function Home() {
     const visible = materials.filter(
       (m) =>
         (!materialChapter || m.chapter === materialChapter) &&
-        matchesQuery(
-          materialQuery,
-          m.name,
-          m.content,
-          m.chapter,
-          m.passages?.map((p) => p.text).join(' '),
-        ),
+        m.name.toLowerCase().includes(materialQuery.toLowerCase()),
     );
     const text = currentMaterial?.passages?.length
       ? passageText(currentMaterial.passages)
@@ -2287,7 +2309,7 @@ export default function Home() {
             <Search size={17} />
             <input
               aria-label="搜索资料"
-              placeholder="搜索资料名称或正文"
+              placeholder="搜索资料名称"
               value={materialQuery}
               onChange={(e) => setMaterialQuery(e.target.value)}
             />
@@ -2316,14 +2338,14 @@ export default function Home() {
               disabled={!!uploadProgress}
               type="file"
               multiple
-              accept=".pdf,.docx,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp"
+              accept=".pdf,.docx,.txt,.md,.markdown"
               onChange={addMaterials}
             />
           </label>
         </div>
         <p className="muted small">
-          支持 PDF、DOCX、TXT、Markdown、PNG/JPG/WebP 图片，每份不超过 20
-          MB。最多提取 40 万字符或 500 页，超出部分会明确标注。
+          支持 PDF、DOCX、TXT、Markdown，每份不超过 20 MB。最多提取 40 万字符或
+          500 页，超出部分会明确标注。
         </p>
         {uploadProgress && (
           <output className="notice">
@@ -2336,19 +2358,7 @@ export default function Home() {
             {uploadError}
           </p>
         )}
-        {readingSide && (
-          <button
-            className="material-list-toggle"
-            aria-expanded={materialListOpen}
-            onClick={() => setMaterialListOpen(!materialListOpen)}
-          >
-            {materialListOpen ? '收起资料列表' : '切换资料'} ·{' '}
-            {currentMaterial?.name}
-          </button>
-        )}
-        <div
-          className={`materials-layout ${readingSide ? 'split-reading' : ''} ${materialListOpen ? 'list-open' : ''}`}
-        >
+        <div className="materials-layout">
           <section className="panel list-panel">
             <div className="panel-heading">
               <h2>资料</h2>
@@ -2409,42 +2419,12 @@ export default function Home() {
               </div>
             )}
           </section>
-          <section
-            className={`panel material-reader ${readingSide ? 'with-reading-notes' : ''}`}
-            style={
-              readingSide
-                ? {
-                    gridTemplateColumns: `minmax(0, ${readingRatio}fr) 12px minmax(0, ${100 - readingRatio}fr)`,
-                  }
-                : undefined
-            }
-          >
+          <section className="panel material-reader">
             {currentMaterial ? (
               <>
                 <div className="panel-heading">
                   <h2>{currentMaterial.name}</h2>
-                  <button
-                    onClick={() => {
-                      setReadingSide(!readingSide);
-                      setMaterialListOpen(false);
-                    }}
-                  >
-                    {readingSide ? '关闭并排笔记' : '并排记笔记'}
-                  </button>
                   <div className="actions">
-                    <button
-                      onClick={() => {
-                        setRecordError('');
-                        setRecordEdit({
-                          kind: 'material',
-                          id: materialKey(currentMaterial),
-                          courseId: activeCourse.id,
-                          title: currentMaterial.name,
-                        });
-                      }}
-                    >
-                      重命名
-                    </button>
                     {currentMaterial.fileId && (
                       <a
                         className="button"
@@ -2462,53 +2442,10 @@ export default function Home() {
                       <RefreshCw size={16} />
                       重新解析
                     </button>
-                    {currentMaterial.type === 'PDF' && (
-                      <button
-                        disabled={!!uploadProgress}
-                        onClick={() => void reparse(currentMaterial, true)}
-                      >
-                        识别扫描文字
-                      </button>
-                    )}
                   </div>
                 </div>
                 <div className="reading-meta">
                   <p className="notice">{coverageLabel(currentMaterial)}</p>
-                  <small>
-                    扫描文字在本机识别，每次最多处理 PDF 前 20
-                    页。请对照原文件核对；手写、公式和复杂表格可能识别不准。
-                  </small>
-                  <MaterialCorrection
-                    key={
-                      materialKey(currentMaterial) +
-                      JSON.stringify(currentMaterial.coverage)
-                    }
-                    passages={currentMaterial.passages ?? []}
-                    save={(passages) =>
-                      updateCourse(activeCourse.id, (c) => ({
-                        ...c,
-                        materials: c.materials.map((m) =>
-                          materialKey(m) === materialKey(currentMaterial)
-                            ? {
-                                ...m,
-                                passages,
-                                content: undefined,
-                                status: '已校正',
-                                coverage: {
-                                  ...m.coverage,
-                                  characters: passages.reduce(
-                                    (n, p) => n + p.text.length,
-                                    0,
-                                  ),
-                                  truncated: m.coverage?.truncated ?? false,
-                                },
-                              }
-                            : m,
-                        ),
-                      }))
-                    }
-                  />
-
                   <label>
                     所属章节
                     <select
@@ -2559,149 +2496,9 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="empty">
-                    <p>
-                      没有可读取正文。扫描 PDF
-                      可点击“识别扫描文字”；图片可重新解析。
-                    </p>
+                    <p>没有可读取正文。扫描件需要先转为含文字的 PDF。</p>
                   </div>
                 )}
-                {readingSide && (
-                  <ReadingDivider
-                    value={readingRatio}
-                    onChange={setReadingRatio}
-                  />
-                )}
-                {readingSide && (
-                  <aside className="reading-notes">
-                    <h3>阅读笔记</h3>
-                    {draftNote ? (
-                      <form className="form-stack" onSubmit={saveDraft}>
-                        <label>
-                          笔记标题
-                          <input
-                            required
-                            value={draftNote.title}
-                            onChange={(e) =>
-                              setDraftNote({
-                                ...draftNote,
-                                title: e.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          笔记正文
-                          <textarea
-                            aria-label="笔记正文"
-                            required
-                            rows={12}
-                            value={draftNote.text}
-                            onChange={(e) =>
-                              setDraftNote({
-                                ...draftNote,
-                                text: e.target.value,
-                              })
-                            }
-                          />
-                        </label>
-                        <label className="check-label">
-                          <input
-                            type="checkbox"
-                            checked={!!draftNote.reviewAt}
-                            onChange={(e) =>
-                              setDraftNote({
-                                ...draftNote,
-                                reviewAt: e.target.checked
-                                  ? localDate()
-                                  : undefined,
-                              })
-                            }
-                          />
-                          加入复习
-                        </label>
-                        <button className="primary" type="submit">
-                          保存笔记
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDraftClose(true)}
-                        >
-                          关闭草稿
-                        </button>
-                        <small>
-                          草稿自动暂存；选中原文可保存带引用的笔记。
-                        </small>
-                      </form>
-                    ) : (
-                      <>
-                        <button onClick={() => startNote()}>
-                          新建阅读笔记
-                        </button>
-                        {noteRows(courseNotes.slice(0, 8))}
-                      </>
-                    )}
-                  </aside>
-                )}
-                <PassageReader
-                  key={activeCourse.id + ':' + materialKey(currentMaterial)}
-                  passages={
-                    currentMaterial.passages?.length
-                      ? currentMaterial.passages
-                      : splitPassages(text)
-                  }
-                  initial={
-                    reading?.materialKey === materialKey(currentMaterial) &&
-                    reading.courseId === activeCourse.id
-                      ? reading.passage
-                      : 0
-                  }
-                  remember={(passage) =>
-                    setReading({
-                      courseId: activeCourse.id,
-                      materialKey: materialKey(currentMaterial),
-                      passage,
-                      updatedAt: new Date().toISOString(),
-                    })
-                  }
-                  ask={(quote, passage) => {
-                    go('study');
-                    setScope('custom');
-                    setSelectedFiles([materialKey(currentMaterial)]);
-                    setQuestion(
-                      '请解释《' +
-                        currentMaterial.name +
-                        '》' +
-                        passage.section +
-                        '的这段原文，并引用资料：\n' +
-                        quote,
-                    );
-                  }}
-                  save={(quote, passage) => {
-                    const now = new Date().toISOString();
-                    setDraftOrigin(null);
-                    setDraftNote({
-                      id: crypto.randomUUID(),
-                      title: currentMaterial.name + ' · ' + passage.section,
-                      text: quote,
-                      course: activeCourse.name,
-                      courseId: activeCourse.id,
-                      createdAt: now,
-                      updatedAt: now,
-                      reviewAt: localDate(),
-                      chapter: currentMaterial.chapter,
-                      sources: [
-                        {
-                          id: 'S1',
-                          name: currentMaterial.name,
-                          fileId: currentMaterial.fileId,
-                          page: passage.page,
-                          section: passage.section,
-                          quote,
-                        },
-                      ],
-                    });
-                  }}
-                />
                 <details className="extraction">
                   <summary>查看提取的文字与定位</summary>
                   {currentMaterial.passages?.map((p, i) => (
@@ -2722,122 +2519,122 @@ export default function Home() {
   }
   function studyView() {
     const messages = activeSession?.messages ?? [];
+    const learningContext = activeSession?.learningContext;
+    const sourceChapterExists = activeCourse.guide?.chapters.some(
+      (chapter) => chapter.id === learningContext?.chapterId,
+    );
     return (
       <div className="study-layout">
-        <button
-          className="session-toggle"
-          aria-expanded={sessionsOpen}
-          aria-controls="session-list"
-          onClick={() => setSessionsOpen(!sessionsOpen)}
-        >
-          {sessionsOpen ? '收起对话列表' : '历史对话'} ·{' '}
-          {activeCourse.sessions.length}
-        </button>
-        <aside
-          id="session-list"
-          className={`panel sessions ${sessionsOpen ? 'is-open' : ''}`}
-        >
+        <aside className="panel sessions">
           <div className="panel-heading">
             <h2>对话</h2>
             <button
               className="icon-button"
               aria-label="新建对话"
-              onClick={() => {
-                newSession();
-                setSessionsOpen(false);
-              }}
+              onClick={newSession}
+              disabled={isSending || isImageUploading}
             >
               <Plus size={18} />
             </button>
           </div>
-          <input
-            aria-label="搜索对话"
-            placeholder="搜索标题或消息内容"
-            value={sessionQuery}
-            onChange={(e) => setSessionQuery(e.target.value)}
-          />
-          {activeCourse.sessions
-            .filter((session) =>
-              matchesQuery(
-                sessionQuery,
-                session.title,
-                ...session.messages.map((m) => m.text),
-              ),
-            )
+          {[...activeCourse.sessions]
             .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
             .map((session) => (
-              <button
-                className={`session-row ${session.id === activeSessionId ? 'selected' : ''}`}
+              <div
+                className={`session-item ${session.id === activeSessionId ? 'selected' : ''}`}
                 key={session.id}
-                onClick={() => go('study', { session: session.id })}
               >
-                <span>{session.title}</span>
-                <small>{timeLabel(session.updatedAt)}</small>
-              </button>
+                <button
+                  className="session-row"
+                  disabled={isSending || isImageUploading}
+                  onClick={() => go('study', { session: session.id })}
+                >
+                  <span>{session.title}</span>
+                  <small>{timeLabel(session.updatedAt)}</small>
+                </button>
+                <button
+                  className="icon-button session-delete"
+                  disabled={isSending}
+                  aria-label={`删除对话：${session.title}`}
+                  onClick={() =>
+                    setPendingRemoval({
+                      kind: 'session',
+                      title: session.title,
+                      courseId: activeCourse.id,
+                      sessionId: session.id,
+                    })
+                  }
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
             ))}
           {!activeCourse.sessions.length && (
             <p className="empty">你的学习对话会保存在这里。</p>
           )}
-          {!!activeCourse.sessions.length &&
-            !activeCourse.sessions.some((session) =>
-              matchesQuery(
-                sessionQuery,
-                session.title,
-                ...session.messages.map((m) => m.text),
-              ),
-            ) && <p className="empty">没有匹配的对话。</p>}
+          <small className="session-trash-hint">
+            删除的对话可从左侧回收站恢复。
+          </small>
         </aside>
         <section className="panel conversation">
           <div className="conversation-heading">
             <h2>{activeSession?.title ?? '问一个你想弄懂的问题'}</h2>
-            {activeSession && (
-              <div className="actions">
-                <button
-                  disabled={isSending}
-                  onClick={() => {
-                    setRecordError('');
-                    setRecordEdit({
-                      kind: 'session',
-                      id: activeSession.id,
-                      courseId: activeCourse.id,
-                      title: activeSession.title,
-                    });
-                  }}
-                >
-                  改名
-                </button>
-                <button
-                  className="danger"
-                  disabled={isSending}
-                  onClick={() =>
-                    setRecordDelete({
-                      kind: 'session',
-                      id: activeSession.id,
-                      courseId: activeCourse.id,
-                      title: activeSession.title,
-                    })
-                  }
-                >
-                  删除对话
-                </button>
-              </div>
-            )}
             <button onClick={() => go('materials')}>查看资料</button>
           </div>
+          {learningContext && (
+            <aside className="lesson-chat-context">
+              <div>
+                <BookOpen size={17} />
+                <span>
+                  <small>围绕课程讲解提问</small>
+                  <strong>
+                    {learningContext.chapterTitle}
+                    {learningContext.concept
+                      ? ` · ${learningContext.concept}`
+                      : ''}
+                  </strong>
+                </span>
+                {sourceChapterExists && (
+                  <button
+                    onClick={() =>
+                      go('course', {
+                        course: activeCourse.id,
+                        chapter: learningContext.chapterId,
+                      })
+                    }
+                  >
+                    回到本章
+                    <ArrowUpRight size={14} />
+                  </button>
+                )}
+              </div>
+              <details>
+                <summary>查看本次对话引用的讲解</summary>
+                <Markdown text={learningContext.text} />
+                <small>
+                  保留的是开始提问时的内容，后续修改或删除章节不影响这段对话。
+                </small>
+              </details>
+            </aside>
+          )}
           {materialPicker()}
           <div className="messages">
-            {!messages.length && (
+            {!messages.some((message) => !message.deletedAt) && (
               <div className="chat-empty">
                 <Bot size={32} />
                 <h2>
-                  {contextMaterials.length
-                    ? '从资料里的一个问题开始'
-                    : '先添加资料，或直接提问'}
+                  {learningContext
+                    ? '带着这段讲解继续问'
+                    : contextMaterials.length
+                      ? '从资料里的一个问题开始'
+                      : '先添加资料，或直接提问'}
                 </h2>
                 <p>
-                  {contextMaterials.length
-                    ? '解释会附上可核对的原文片段。你可以选中回答中的关键内容，保存成笔记。'
-                    : '没有原文依据时，回答会按通用知识说明。'}
+                  {learningContext
+                    ? '相关讲解已带入。可以修改下方的问题，点击发送后开始对话；对话只保存在问答中。'
+                    : contextMaterials.length
+                      ? '解释会附上可核对的原文片段。你可以选中回答中的关键内容，保存成笔记。'
+                      : '没有原文依据时，回答会按通用知识说明。'}
                 </p>
                 <div className="prompt-list">
                   {[
@@ -2853,133 +2650,202 @@ export default function Home() {
                 </div>
               </div>
             )}
-            {[
-              ...messages,
-              ...(liveReply?.course === activeCourse.id &&
-              liveReply.session === activeSessionId
-                ? [liveReply.message]
-                : []),
-            ].map((message, index) => (
-              <article className={`message ${message.role}`} key={index}>
-                <div className="message-label">
-                  {message.role === 'assistant' ? '课伴' : preferences.userName}
-                </div>
-                {message.incomplete && (
-                  <p className="notice">未完成的回答 · 请重试或核对后使用</p>
-                )}
-                <Markdown text={message.text} />
-                <div className="actions">
-                  <button
-                    disabled={isSending}
-                    onClick={() => {
-                      setRecordError('');
-                      setRecordEdit({
-                        kind: 'message',
-                        id: activeSessionId,
-                        courseId: activeCourse.id,
-                        title: message.text,
-                        index,
-                      });
-                    }}
-                  >
-                    编辑消息
-                  </button>
-                  <button
-                    className="danger"
-                    disabled={isSending}
-                    onClick={() =>
-                      setRecordDelete({
-                        kind: 'message',
-                        id: activeSessionId,
-                        courseId: activeCourse.id,
-                        title: shortTitle(message.text),
-                        index,
-                      })
-                    }
-                  >
-                    删除消息
-                  </button>
-                </div>
-                {message.role === 'assistant' && (
-                  <>
-                    {message.scope && (
-                      <small className="scope-result">
-                        从 {message.scope.selected} 份资料中选取：
-                        {message.scope.matchedFiles} 份文件、
-                        {message.scope.passages} 段原文。
-                      </small>
-                    )}
-                    {evidenceList(message.evidence ?? [])}
-                    {!message.evidence?.length && message.scope && (
-                      <p className="muted small">
-                        本次回答没有可定位的引用，请结合原文核对。
-                      </p>
-                    )}
-                    {!!message.sources?.length && (
-                      <p className="notice">
-                        旧会话引用未经核验：{message.sources.join('；')}
-                      </p>
-                    )}
-                    {!!message.retrieved?.length && (
-                      <details className="retrieved">
-                        <summary>查看本次提供给 AI 的片段</summary>
-                        {evidenceList(message.retrieved, '检索片段')}
-                      </details>
-                    )}
-                    <div className="message-actions">
-                      <button onClick={() => startNote(message, index)}>
-                        <Save size={16} />
-                        {message.saved ? '再次摘录' : '摘录为笔记'}
-                      </button>
+            {messages.map(
+              (message, index) =>
+                !message.deletedAt && (
+                  <article className={`message ${message.role}`} key={index}>
+                    <div className="message-label">
+                      {message.role === 'assistant'
+                        ? '课伴'
+                        : preferences.userName}
                       <button
+                        className="icon-button message-delete"
+                        disabled={isSending}
+                        aria-label={`删除第${index + 1}条消息`}
                         onClick={() =>
-                          setQuestion('请给出一个直观例子，逐步解释。')
+                          setPendingRemoval({
+                            kind: 'message',
+                            title: message.text.slice(0, 60),
+                            courseId: activeCourse.id,
+                            sessionId: activeSession!.id,
+                            index,
+                          })
                         }
                       >
-                        举个例子
-                      </button>
-                      <button
-                        onClick={() =>
-                          setQuestion(
-                            '请根据刚才的内容出一道题，先不要给答案。',
-                          )
-                        }
-                      >
-                        考考我
+                        <Trash2 size={14} />
                       </button>
                     </div>
-                  </>
-                )}
-              </article>
-            ))}
-            {isSending && (
-              <output className="notice">
-                <LoaderCircle className="spin" size={16} />
-                {liveReply ? '正在生成回答' : '正在连接并查找原文'} · 已等待{' '}
-                {elapsed} 秒
-                {elapsed >= 15 && <span>耗时较长，你可以停止后重试。</span>}
-                <button
-                  type="button"
-                  onClick={() => chatAbort.current?.abort()}
-                >
-                  停止生成
-                </button>
-              </output>
+                    {!!message.images?.length && (
+                      <div className="chat-image-gallery">
+                        {message.images.map((image) => (
+                          <a
+                            key={image.fileId}
+                            href={`/api/files?id=${encodeURIComponent(image.fileId)}`}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            <Image
+                              unoptimized
+                              width={240}
+                              height={180}
+                              src={`/api/files?id=${encodeURIComponent(image.fileId)}`}
+                              alt={image.name}
+                            />
+                          </a>
+                        ))}
+                      </div>
+                    )}
+                    <Markdown text={message.text} />
+                    {message.role === 'assistant' && (
+                      <>
+                        {message.scope && (
+                          <small className="scope-result">
+                            {message.scope.lessonTitle &&
+                              `围绕「${message.scope.lessonTitle}」讲解回答。`}
+                            {!!message.scope.imageCount &&
+                              `已读取 ${message.scope.imageCount} 张图片。`}
+                            从 {message.scope.selected} 份资料中选取：
+                            {message.scope.matchedFiles} 份文件、
+                            {message.scope.passages} 段原文。
+                          </small>
+                        )}
+                        {evidenceList(message.evidence ?? [])}
+                        {!message.evidence?.length && message.scope && (
+                          <p className="muted small">
+                            {message.scope.imageCount
+                              ? '图片可能有识别误差，请对照原图核对。'
+                              : message.scope.lessonTitle
+                                ? '章节讲解是学习草稿，关键结论请结合授课教材核对。'
+                                : '本次回答没有可定位的引用，请结合原文核对。'}
+                          </p>
+                        )}
+                        {!!message.sources?.length && (
+                          <p className="notice">
+                            旧会话引用未经核验：{message.sources.join('；')}
+                          </p>
+                        )}
+                        {!!message.retrieved?.length && (
+                          <details className="retrieved">
+                            <summary>查看本次提供给 AI 的片段</summary>
+                            {evidenceList(message.retrieved, '检索片段')}
+                          </details>
+                        )}
+                        <div className="message-actions">
+                          {message.scope?.retrieval && (
+                            <small>{message.scope.retrieval}</small>
+                          )}
+                          {message.scope?.truncated && (
+                            <small>
+                              达到长度限制，回答可能未完成，可继续追问。
+                            </small>
+                          )}
+                          <button onClick={() => startNote(message, index)}>
+                            <Save size={16} />
+                            {message.saved ? '再次摘录' : '摘录为笔记'}
+                          </button>
+                          <button
+                            onClick={() =>
+                              setQuestion('请给出一个直观例子，逐步解释。')
+                            }
+                          >
+                            举个例子
+                          </button>
+                          <button
+                            onClick={() =>
+                              setQuestion(
+                                '请根据刚才的内容出一道题，先不要给答案。',
+                              )
+                            }
+                          >
+                            考考我
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </article>
+                ),
             )}
+            {isSending &&
+              streamTarget === `${activeCourse.id}/${activeSessionId}` && (
+                <article
+                  className="message assistant stream-preview"
+                  aria-live="polite"
+                  aria-busy="true"
+                >
+                  <div className="stream-state">
+                    <LoaderCircle className="spin" size={16} />
+                    <span>{streamStatus}</span>
+                    <button onClick={() => chatController.current?.abort()}>
+                      停止生成
+                    </button>
+                  </div>
+                  {streamText && <Markdown text={streamText} />}
+                </article>
+              )}
+            {isSending &&
+              streamTarget !== `${activeCourse.id}/${activeSessionId}` && (
+                <output className="notice">
+                  <LoaderCircle className="spin" size={16} />
+                  另一段对话仍在生成。
+                  <button onClick={() => chatController.current?.abort()}>
+                    停止生成
+                  </button>
+                </output>
+              )}
             <div ref={chatEndRef} />
           </div>
           {chatError && (
             <p className="error" role="alert">
-              {chatError} 问题已保留在输入框。
-              <button
-                disabled={isSending || !question.trim()}
-                onClick={() => void submitQuestion()}
-              >
-                重新发送
-              </button>
+              {chatError} 提问已保留在当前对话中。
             </p>
           )}
           <form className="composer" onSubmit={submitQuestion}>
+            <input
+              ref={imageInput}
+              type="file"
+              hidden
+              multiple
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              onChange={addQuestionImages}
+            />
+            {!!questionImages.length && (
+              <div className="chat-image-attachments">
+                {questionImages.map((image) => (
+                  <div key={image.fileId}>
+                    <Image
+                      unoptimized
+                      width={90}
+                      height={64}
+                      src={`/api/files?id=${encodeURIComponent(image.fileId)}`}
+                      alt={image.name}
+                    />
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`移除图片：${image.name}`}
+                      onClick={() =>
+                        setQuestionImages((current) =>
+                          current.filter(
+                            (item) => item.fileId !== image.fileId,
+                          ),
+                        )
+                      }
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label className="semantic-toggle">
+              <input
+                type="checkbox"
+                checked={semanticSearch}
+                disabled={isSending}
+                onChange={(e) => setSemanticSearch(e.target.checked)}
+              />
+              AI 语义改写检索 · 有资料时增加一次短请求，可关闭
+            </label>
             <textarea
               aria-label="学习问题"
               placeholder="输入问题，Ctrl + Enter 发送"
@@ -2995,13 +2861,43 @@ export default function Home() {
             />
             <div>
               <small>
-                {contextMaterials.length
-                  ? '带原文片段回答'
-                  : '当前无可读取资料 · 通用知识问答'}
+                {isImageUploading
+                  ? '正在保存图片…'
+                  : questionImages.length
+                    ? `${questionImages.length} 张图片 · 发送后由视觉模型读取`
+                    : learningContext
+                      ? '已带上相关讲解 · 对话保存在问答中'
+                      : contextMaterials.length
+                        ? '带原文片段回答'
+                        : '当前无可读取资料 · 通用知识问答'}
               </small>
               <button
+                type="button"
+                className="icon-button"
+                aria-label="添加图片提问"
+                title={
+                  aiSettings?.models.find((option) => option.id === model)
+                    ?.vision
+                    ? '添加图片（最多 3 张，每张 5 MB）'
+                    : '当前模型不支持图片'
+                }
+                disabled={
+                  isSending ||
+                  isImageUploading ||
+                  !aiSettings?.models.find((option) => option.id === model)
+                    ?.vision
+                }
+                onClick={() => imageInput.current?.click()}
+              >
+                <ImagePlus size={19} />
+              </button>
+              <button
                 className="primary"
-                disabled={!question.trim() || isSending}
+                disabled={
+                  (!question.trim() && !questionImages.length) ||
+                  isSending ||
+                  isImageUploading
+                }
               >
                 <Send size={17} />
                 {isSending ? '回答中' : '发送'}
@@ -3013,16 +2909,19 @@ export default function Home() {
     );
   }
   function knowledgeView() {
+    const collectionNotes = noteCollection === 'trash' ? deletedNotes : notes;
     const chapterOptions = [
         ...new Set(
-          notes
+          collectionNotes
             .filter((n) => noteCourse === 'all' || n.courseId === noteCourse)
             .map((n) => n.chapter)
             .filter(Boolean),
         ),
       ],
       tagOptions = [
-        ...new Set(notes.flatMap((n) => n.tags ?? []).filter(Boolean)),
+        ...new Set(
+          collectionNotes.flatMap((n) => n.tags ?? []).filter(Boolean),
+        ),
       ];
     return (
       <>
@@ -3030,11 +2929,12 @@ export default function Home() {
           <>
             <div className="page-heading">
               <div>
-                <p className="eyebrow">跨课程整理与检索</p>
-                <h1>我的知识库</h1>
+                <p className="eyebrow">你的课程，慢慢连成体系</p>
+                <h1>{noteCollection === 'trash' ? '回收站' : '我的知识库'}</h1>
                 <p className="muted">
-                  全库 {notes.length} 条笔记 · {dueNotes.length} 条到期 ·
-                  按最近更新排序
+                  {noteCollection === 'trash'
+                    ? `${deletedCourses.length} 门课程 · ${deletedNotes.length} 篇笔记 · ${managedTrashCount} 项课程内容 · 随时可以恢复`
+                    : `${notes.length} 篇笔记 · ${courses.length} 门课程 · ${dueNotes.length} 篇待复习`}
                 </p>
               </div>
               <div className="actions">
@@ -3048,12 +2948,48 @@ export default function Home() {
                 </button>
               </div>
             </div>
+            <div className="library-collections" aria-label="笔记分类">
+              <button
+                aria-pressed={noteCollection === 'all'}
+                onClick={() => go('knowledge')}
+              >
+                <FileText size={16} />
+                全部笔记<span>{notes.length}</span>
+              </button>
+              <button
+                aria-pressed={noteCollection === 'starred'}
+                onClick={() => go('knowledge', { collection: 'starred' })}
+              >
+                <Star size={16} />
+                已收藏<span>{notes.filter((n) => n.starred).length}</span>
+              </button>
+              {noteCollection === 'trash' && (
+                <button aria-pressed="true">
+                  <Trash2 size={16} />
+                  回收站
+                  <span>
+                    {deletedNotes.length +
+                      deletedCourses.length +
+                      managedTrashCount}
+                  </span>
+                </button>
+              )}
+              <small>按最近更新排序</small>
+            </div>
             <div className="toolbar">
               <div className="search">
                 <Search size={17} />
                 <input
-                  aria-label="搜索全部笔记"
-                  placeholder="搜索标题、正文、章节或标签"
+                  aria-label={
+                    noteCollection === 'trash'
+                      ? '搜索已删除笔记'
+                      : '搜索全部笔记'
+                  }
+                  placeholder={
+                    noteCollection === 'trash'
+                      ? '搜索已删除笔记的标题、正文或标签'
+                      : '搜索标题、正文、章节或标签'
+                  }
                   value={noteQuery}
                   onChange={(e) => setNoteQuery(e.target.value)}
                 />
@@ -3107,52 +3043,163 @@ export default function Home() {
         <div
           className={`knowledge-layout ${selectedNote ? 'reading-mode' : 'library-mode'}`}
         >
+          {noteCollection === 'trash' && !selectedNote && (
+            <section className="panel course-trash">
+              <div className="panel-heading">
+                <h2>
+                  已删除课程{' '}
+                  <span className="result-count">{deletedCourses.length}</span>
+                </h2>
+                <span className="muted">
+                  整门恢复，包括资料、对话和复习计划
+                </span>
+              </div>
+              {deletedCourses.map((course) => (
+                <div className="course-trash-row" key={course.id}>
+                  <span className="course-emblem">
+                    <BookOpen size={20} />
+                  </span>
+                  <div>
+                    <strong>{course.name}</strong>
+                    <small>
+                      {course.materials.length} 份资料 ·{' '}
+                      {
+                        allNotes.filter((note) => belongsToCourse(note, course))
+                          .length
+                      }{' '}
+                      篇笔记 · {timeLabel(course.deletedAt!)} 删除
+                    </small>
+                  </div>
+                  <button
+                    onClick={() => {
+                      setCourses((current) =>
+                        restoreCourse(current, course.id),
+                      );
+                      if (!courses.length) setActiveCourseId(course.id);
+                      setToast(`已恢复「${course.name}」及其资料和计划。`);
+                    }}
+                    aria-label={`恢复课程：${course.name}`}
+                  >
+                    <RotateCcw size={16} />
+                    恢复课程
+                  </button>
+                </div>
+              ))}
+              {!deletedCourses.length && (
+                <p className="muted">没有已删除的课程。</p>
+              )}
+            </section>
+          )}
+          {!selectedNote && noteCollection === 'trash' && (
+            <div className="managed-trash-list">
+              {allCourses
+                .filter((course) => !course.deletedAt)
+                .map((course) => (
+                  <CourseRecycleBin
+                    key={course.id}
+                    name={course.name}
+                    items={courseTrashItems(course)}
+                  />
+                ))}
+            </div>
+          )}
           {!selectedNote && (
             <section className="panel note-list">
               <div className="panel-heading">
-                <h2>找到 {filteredNotes.length} 条</h2>
+                <h2>
+                  {noteCollection === 'trash'
+                    ? '单独删除的笔记'
+                    : noteCollection === 'starred'
+                      ? '我的收藏'
+                      : '笔记'}
+                  <span className="result-count">{filteredNotes.length}</span>
+                </h2>
               </div>
               {filteredNotes.map((note) => (
-                <button
-                  className="note-row"
-                  key={note.id}
-                  onClick={() => {
-                    setSelectedNoteId(note.id);
-                    setEditingNote(false);
-                    history.pushState(
-                      null,
-                      '',
-                      `#${new URLSearchParams({ view: 'knowledge', note: note.id, filter: noteCourse })}`,
-                    );
-                  }}
-                >
-                  <small>
-                    {noteOwner(note)?.name ?? note.course} /{' '}
-                    {note.chapter || '未分类'}
-                  </small>
-                  <strong>{note.title}</strong>
-                  <p>{note.text.replace(/[#*`]/g, '').slice(0, 90)}</p>
-                  <div className="tags">
-                    {note.tags?.filter(Boolean).map((t) => (
-                      <span key={t}>{t}</span>
-                    ))}
+                <div className="note-row" key={note.id}>
+                  <button
+                    className="note-row-open"
+                    disabled={!!note.deletedAt}
+                    onClick={() => openNote(note, true)}
+                  >
+                    <span className="note-file-icon">
+                      <FileText size={21} />
+                    </span>
+                    <span className="note-row-content">
+                      <small>
+                        {noteOwner(note)?.name ?? note.course} /{' '}
+                        {note.chapter || '未分类'}
+                      </small>
+                      <strong>{note.title}</strong>
+                      <p>{note.text.replace(/[#*`]/g, '').slice(0, 90)}</p>
+                      <div className="tags">
+                        {note.tags?.filter(Boolean).map((t) => (
+                          <span key={t}>{t}</span>
+                        ))}
+                      </div>
+                      <small>
+                        {note.deletedAt
+                          ? `${timeLabel(note.deletedAt)} 删除`
+                          : `${timeLabel(note.updatedAt ?? note.createdAt)} 更新`}
+                        {!note.deletedAt && isDue(note) ? ' · 待复习' : ''}
+                      </small>
+                    </span>
+                  </button>
+                  <div className="note-row-actions">
+                    {note.deletedAt ? (
+                      <button
+                        onClick={() => restoreNote(note)}
+                        aria-label={`恢复笔记：${note.title}`}
+                      >
+                        <RotateCcw size={16} />
+                        恢复
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          className={`icon-button star-button ${note.starred ? 'is-starred' : ''}`}
+                          aria-label={`${note.starred ? '取消收藏' : '收藏笔记'}：${note.title}`}
+                          aria-pressed={!!note.starred}
+                          onClick={() => toggleStar(note)}
+                        >
+                          <Star size={17} />
+                        </button>
+                        <button
+                          className="icon-button delete-note-button"
+                          aria-label={`删除笔记：${note.title}`}
+                          onClick={() => setPendingDeleteNote(note)}
+                        >
+                          <Trash2 size={17} />
+                        </button>
+                      </>
+                    )}
                   </div>
-                  <small>
-                    {timeLabel(note.updatedAt ?? note.createdAt)} 更新
-                    {isDue(note) ? ' · 待复习' : ''}
-                  </small>
-                </button>
+                </div>
               ))}
               {!filteredNotes.length && (
                 <div className="empty">
                   <Search size={26} />
                   <h3>
-                    {notes.length ? '没有匹配的笔记' : '保存第一条知识笔记'}
+                    {noteCollection === 'trash' && !deletedNotes.length
+                      ? '没有单独删除的笔记'
+                      : noteCollection === 'trash'
+                        ? '没有匹配的已删除笔记'
+                        : noteCollection === 'starred' && !noteQuery
+                          ? '把常用笔记留在手边'
+                          : notes.length
+                            ? '没有匹配的笔记'
+                            : '保存第一条知识笔记'}
                   </h3>
                   <p>
-                    {notes.length
-                      ? '调整课程、章节或搜索条件。'
-                      : '从 AI 回答摘录，或自己写下理解。'}
+                    {noteCollection === 'trash' && !deletedNotes.length
+                      ? '删除的笔记会保留在这里，随时可以恢复。'
+                      : noteCollection === 'trash'
+                        ? '调整课程、章节或搜索条件。'
+                        : noteCollection === 'starred'
+                          ? '点击笔记旁的星标，就可以从侧边栏快速打开。'
+                          : notes.length
+                            ? '调整课程、章节或搜索条件。'
+                            : '从 AI 回答摘录，或自己写下理解。'}
                   </p>
                   <button
                     onClick={() =>
@@ -3161,11 +3208,12 @@ export default function Home() {
                           setNoteCourse('all'),
                           setNoteChapter(''),
                           setNoteTag(''),
-                          setReviewOnly(false))
+                          setReviewOnly(false),
+                          setNoteCollection('all'))
                         : startNote()
                     }
                   >
-                    {notes.length ? '清除筛选' : '新建笔记'}
+                    {notes.length ? '查看全部笔记' : '新建笔记'}
                   </button>
                 </div>
               )}
@@ -3185,7 +3233,7 @@ export default function Home() {
                           history.pushState(
                             null,
                             '',
-                            `#${new URLSearchParams({ view: 'knowledge', filter: noteCourse })}`,
+                            `#${new URLSearchParams({ view: 'knowledge', filter: noteCourse, collection: noteCollection })}`,
                           );
                         }}
                       >
@@ -3197,15 +3245,27 @@ export default function Home() {
                       </span>
                     </div>
                     <div className="actions">
+                      <button
+                        className={`icon-button star-button ${selectedNote.starred ? 'is-starred' : ''}`}
+                        aria-label={
+                          selectedNote.starred
+                            ? '取消收藏当前笔记'
+                            : '收藏当前笔记'
+                        }
+                        aria-pressed={!!selectedNote.starred}
+                        onClick={() => toggleStar(selectedNote)}
+                      >
+                        <Star size={17} />
+                      </button>
                       <button onClick={() => setEditingNote(!editingNote)}>
                         {editingNote ? '完成编辑' : '编辑笔记'}
                       </button>
                       <button
-                        className="danger"
-                        onClick={() => setPendingNoteDelete(selectedNote)}
+                        className="icon-button delete-note-button"
+                        aria-label="删除当前笔记"
+                        onClick={() => setPendingDeleteNote(selectedNote)}
                       >
-                        <Trash2 size={16} />
-                        删除笔记
+                        <Trash2 size={17} />
                       </button>
                     </div>
                   </div>
@@ -3249,6 +3309,9 @@ export default function Home() {
                       </label>
                       <label>
                         笔记正文
+                        <small className="editor-link-hint">
+                          用 ## 分节，用 [[笔记名]] 连接已有笔记。
+                        </small>
                         <textarea
                           rows={14}
                           value={selectedNote.text}
@@ -3317,33 +3380,8 @@ export default function Home() {
                       />
                     </>
                   )}
-                  {evidenceList(selectedNote.sources ?? [])}
                   <details className="note-review-settings">
                     <summary>复习与掌握情况</summary>
-                    <div className="review-history">
-                      <h4>最近复习记录</h4>
-                      {(selectedNote.reviewHistory ?? [])
-                        .slice(-10)
-                        .reverse()
-                        .map((record, index) => (
-                          <details key={record.at + index}>
-                            <summary>
-                              {new Date(record.at).toLocaleString()} · 自评：
-                              {record.rating === 'good'
-                                ? '答对'
-                                : record.rating === 'hard'
-                                  ? '吃力'
-                                  : '没答对'}
-                            </summary>
-                            <p style={{ whiteSpace: 'pre-wrap' }}>
-                              {record.answer}
-                            </p>
-                          </details>
-                        ))}
-                      {!selectedNote.reviewHistory?.length && (
-                        <small>暂无记录，完成一次复习后显示。</small>
-                      )}
-                    </div>
                     <button
                       className="text-button"
                       onClick={() => startReview([selectedNote.id])}
@@ -3381,42 +3419,7 @@ export default function Home() {
                       </small>
                     </div>
                   </details>
-                  {suggestedLinks(selectedNote, notes).length > 0 && (
-                    <details className="suggested-links">
-                      <summary>
-                        可关联的笔记（
-                        {suggestedLinks(selectedNote, notes).length}）
-                      </summary>
-                      <small>
-                        按共同标签或同一章节推荐，确认后才建立关联。
-                      </small>
-                      {suggestedLinks(selectedNote, notes).map((item) => (
-                        <div className="suggested-link-card" key={item.note.id}>
-                          <button onClick={() => openNote(item.note)}>
-                            {item.note.title}
-                          </button>
-                          <small>{item.reason}</small>
-                          <button
-                            onClick={() =>
-                              editNote({
-                                relatedIds: [
-                                  ...(selectedNote.relatedIds ?? []),
-                                  item.note.id,
-                                ],
-                                relatedLabels: {
-                                  ...selectedNote.relatedLabels,
-                                  [item.note.id]: '相关',
-                                },
-                              })
-                            }
-                          >
-                            添加关联
-                          </button>
-                        </div>
-                      ))}
-                    </details>
-                  )}
-
+                  {evidenceList(selectedNote.sources ?? [])}
                   {selectedNote.sessionId && (
                     <button
                       className="text-button"
@@ -3501,66 +3504,42 @@ export default function Home() {
     );
   }
   function reviewView() {
-    const today = localDate();
-    const horizon = new Date();
-    horizon.setDate(horizon.getDate() + 3);
-    const suggestions = planSuggestions({
-      dueCount: dueNotes.length,
-      upcomingCount: notes.filter(
-        (n) =>
-          n.reviewAt && n.reviewAt > today && n.reviewAt <= localDate(horizon),
-      ).length,
-      courses: courses.map((c) => ({
-        name: c.name,
-        materialCount: c.materials.filter((m) => m.fileId).length,
-        noteCount: notes.filter((n) => n.courseId === c.id).length,
-      })),
-      todayTasks: tasks.filter((t) => t.status === 'todo' && t.date === today)
-        .length,
-      doneToday: tasks.filter((t) => t.status === 'done' && t.date === today)
-        .length,
-    });
-    const todoTaskCount = tasks.filter((t) => t.status === 'todo').length;
+    if (reviewQueue === null)
+      return (
+        <ReviewPlanner
+          courses={courses}
+          notes={notes}
+          plans={visibleReviewPlans}
+          model={model}
+          dueCount={dueNotes.length}
+          onChange={(next) =>
+            setReviewPlans((current) => [
+              ...current.filter(
+                (plan) =>
+                  !courses.some((course) => course.id === plan.courseId),
+              ),
+              ...next,
+            ])
+          }
+          onPractice={() =>
+            startReview(
+              (dueNotes.length ? dueNotes : notes).map((note) => note.id),
+            )
+          }
+          onOpenNote={openNote}
+          onAddCourse={() => setNewCourseOpen(true)}
+        />
+      );
     return (
       <div className="review-page">
         <div className="page-heading">
           <div>
             <p className="eyebrow">先回忆，再核对</p>
             <h1>复习</h1>
-            <p className="muted">
-              到期复习 {dueNotes.length} 条 · 学习任务 {todoTaskCount} 项
-            </p>
           </div>
+          <button onClick={() => setReviewQueue(null)}>返回复习计划</button>
         </div>
-        {reviewQueue !== null && (
-          <div className="review-session-actions">
-            <button
-              onClick={() => {
-                setReviewQueue(null);
-                setReviewUndo(null);
-              }}
-            >
-              退出本轮复习
-            </button>
-            {reviewUndo && <button onClick={undoReview}>撤销上次评分</button>}
-          </div>
-        )}
-        {reviewQueue === null ? (
-          <section className="panel review-card">
-            <h2>{dueNotes.length} 条笔记已到复习日期</h2>
-            <p>
-              写下你的回答，查看笔记解析，再自行判断是否答对。系统按
-              本次自评与连续答对次数安排后续复习：没答对次日再练，有点吃力缩短间隔，答对逐步延长。
-            </p>
-            <button
-              className="primary"
-              disabled={!dueNotes.length}
-              onClick={() => startReview()}
-            >
-              开始复习
-            </button>
-          </section>
-        ) : reviewNote ? (
+        {reviewNote ? (
           <section className="panel review-card">
             <div className="review-progress">
               <span>
@@ -3611,23 +3590,13 @@ export default function Home() {
                   <Markdown text={reviewNote.text} />
                   {evidenceList(reviewNote.sources ?? [])}
                 </div>
-                <p className="muted">
-                  对照笔记自行判断；这不是 AI
-                  自动评分。回答和自评会保存到笔记复习记录。
-                </p>
+                <p className="muted">对照笔记自行判断；这不是 AI 自动评分。</p>
                 <div className="actions">
-                  <button onClick={() => gradeReview('again')}>
-                    没答对 · {scheduleReview(reviewNote, 'again').reviewAt} 再练
+                  <button onClick={() => gradeReview(false)}>
+                    没答对 · 明天再练
                   </button>
-                  <button onClick={() => gradeReview('hard')}>
-                    有点吃力 · {scheduleReview(reviewNote, 'hard').reviewAt}{' '}
-                    巩固
-                  </button>
-                  <button
-                    className="primary"
-                    onClick={() => gradeReview('good')}
-                  >
-                    答对了 · {scheduleReview(reviewNote, 'good').reviewAt} 再练
+                  <button className="primary" onClick={() => gradeReview(true)}>
+                    答对了 · 下一条
                     <Check size={17} />
                   </button>
                 </div>
@@ -3642,272 +3611,18 @@ export default function Home() {
               完成 {reviewQueue.length} 条，自评答对 {reviewCorrect}{' '}
               条。下次复习日期已自动更新。
             </p>
-            <button className="primary" onClick={() => go('knowledge')}>
-              回到笔记
+            <button className="primary" onClick={() => setReviewQueue(null)}>
+              回到复习计划
             </button>
-          </section>
-        )}
-        {reviewQueue === null && (
-          <section className="panel plan-panel">
-            <div className="plan-tasks">
-              <div className="plan-tasks-head">
-                <h3>
-                  我的学习任务
-                  {todoTaskCount > 0 && (
-                    <span className="count">{todoTaskCount}</span>
-                  )}
-                </h3>
-                <details className="add-task">
-                  <summary>添加任务</summary>
-                  <form className="task-form form-stack" onSubmit={addTask}>
-                    <label>
-                      任务名称
-                      <input
-                        value={taskTitle}
-                        onChange={(e) => setTaskTitle(e.target.value)}
-                        placeholder="例如：整理第二章笔记"
-                        maxLength={100}
-                      />
-                    </label>
-                    <label>
-                      学习内容
-                      <textarea
-                        rows={3}
-                        value={taskContent}
-                        onChange={(e) => setTaskContent(e.target.value)}
-                        placeholder="记录这节课的重点、疑问、对应笔记标题…（可留空，添加后随时补充）"
-                      />
-                    </label>
-                    <div className="task-form-row">
-                      <label>
-                        类型
-                        <select
-                          value={taskKind}
-                          onChange={(e) =>
-                            setTaskKind(e.target.value as 'learn' | 'review')
-                          }
-                        >
-                          <option value="learn">学习</option>
-                          <option value="review">复习</option>
-                        </select>
-                      </label>
-                      <label>
-                        关联课程
-                        <select
-                          value={taskCourseId}
-                          onChange={(e) => setTaskCourseId(e.target.value)}
-                        >
-                          <option value="">不关联</option>
-                          {courses.map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        计划日期
-                        <input
-                          type="date"
-                          value={taskDate}
-                          onChange={(e) => setTaskDate(e.target.value)}
-                        />
-                      </label>
-                    </div>
-                    <button className="primary" type="submit">
-                      添加到计划
-                    </button>
-                  </form>
-                </details>
-              </div>
-              <input
-                aria-label="搜索任务"
-                placeholder="搜索任务、内容、课程或日期"
-                value={taskQuery}
-                onChange={(e) => setTaskQuery(e.target.value)}
-              />
-              {sortedTasks.length ? (
-                <div className="task-list">
-                  {sortedTasks.map((t) => (
-                    <div key={t.id} id={`task-${t.id}`} className="task-item">
-                      <div className={`task-row ${t.status}`}>
-                        <label className="check-label">
-                          <input
-                            type="checkbox"
-                            checked={t.status === 'done'}
-                            onChange={() => toggleTask(t.id)}
-                            aria-label={`标记完成 ${t.title}`}
-                          />
-                          <span className="task-title">{t.title}</span>
-                        </label>
-                        <span className={`task-kind ${t.kind}`}>
-                          {t.kind === 'learn' ? '学习' : '复习'}
-                        </span>
-                        {t.courseId && (
-                          <span className="task-course">
-                            {courses.find((c) => c.id === t.courseId)?.name ??
-                              ''}
-                          </span>
-                        )}
-                        {t.date && <span className="task-date">{t.date}</span>}
-                        <button
-                          className="icon-button task-expand"
-                          aria-label={`查看任务详情 ${t.title}`}
-                          aria-expanded={expandedTask === t.id}
-                          onClick={() =>
-                            setExpandedTask(expandedTask === t.id ? null : t.id)
-                          }
-                        >
-                          <ChevronDown
-                            size={14}
-                            className={
-                              expandedTask === t.id ? 'task-expand-open' : ''
-                            }
-                          />
-                        </button>
-                        <button
-                          className="icon-button"
-                          aria-label={`删除任务 ${t.title}`}
-                          onClick={() =>
-                            setRecordDelete({
-                              kind: 'task',
-                              id: t.id,
-                              courseId: t.courseId ?? '',
-                              title: t.title,
-                            })
-                          }
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                      {expandedTask === t.id && (
-                        <div className="task-detail">
-                          <button
-                            onClick={() => {
-                              setRecordError('');
-                              setRecordEdit({
-                                kind: 'task',
-                                id: t.id,
-                                courseId: t.courseId ?? '',
-                                title: t.title,
-                                content: t.content ?? '',
-                                taskKind: t.kind,
-                                date: t.date ?? '',
-                              });
-                            }}
-                          >
-                            编辑任务信息
-                          </button>
-                          {editingTaskId === t.id ? (
-                            <>
-                              <textarea
-                                rows={4}
-                                value={editContent}
-                                onChange={(e) => setEditContent(e.target.value)}
-                                placeholder="补充学习内容…"
-                              />
-                              <div className="actions">
-                                <button
-                                  className="text-button"
-                                  onClick={() => setEditingTaskId(null)}
-                                >
-                                  取消
-                                </button>
-                                <button
-                                  className="primary"
-                                  onClick={() => saveEditTask(t.id)}
-                                >
-                                  保存内容
-                                </button>
-                              </div>
-                            </>
-                          ) : (
-                            <>
-                              <h4>学习内容</h4>
-                              {t.content ? (
-                                <Markdown text={t.content} />
-                              ) : (
-                                <p className="muted">
-                                  还没有学习内容，点「编辑内容」补充。
-                                </p>
-                              )}
-                              <div className="actions">
-                                <button
-                                  className="text-button"
-                                  onClick={() => startEditTask(t)}
-                                >
-                                  编辑内容
-                                </button>
-                              </div>
-                            </>
-                          )}
-                          <p className="muted task-meta">
-                            创建于 {t.createdAt.slice(0, 10)}
-                            {t.status === 'done' ? ' · 已完成' : ''}
-                          </p>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="muted">
-                  {tasks.length
-                    ? '没有匹配的任务，请调整搜索条件。'
-                    : '还没有任务。点「添加任务」为自己安排一项学习或复习。'}
-                </p>
-              )}
-            </div>
-            <details className="planning-advice">
-              <summary>学习规划与 AI 建议</summary>
-              <div className="plan-head">
-                <div>
-                  <p className="eyebrow">自主学习</p>
-                  <h2>学习规划</h2>
-                </div>
-                <button
-                  className="secondary"
-                  disabled={aiLoading}
-                  onClick={generatePlans}
-                >
-                  {aiLoading ? '生成中…' : 'AI 生成建议'}
-                  <Sparkles size={15} />
-                </button>
-              </div>
-              <div className="plan-suggestions">
-                {suggestions.map((s, i) => (
-                  <div key={i} className={`suggestion ${s.kind}`}>
-                    <span className="suggestion-icon">
-                      {s.kind === 'review' ? (
-                        <CalendarDays size={15} />
-                      ) : s.kind === 'learn' ? (
-                        <GraduationCap size={15} />
-                      ) : (
-                        <Lightbulb size={15} />
-                      )}
-                    </span>
-                    <span>{s.text}</span>
-                  </div>
-                ))}
-                {aiSuggestions.map((s, i) => (
-                  <div key={`ai-${i}`} className="suggestion ai">
-                    <span className="suggestion-icon">
-                      <Sparkles size={15} />
-                    </span>
-                    <span>{s}</span>
-                  </div>
-                ))}
-              </div>
-            </details>
           </section>
         )}
       </div>
     );
   }
-  const courseViewRequested = ['course', 'materials', 'study'].includes(
-    activeView,
-  );
-  const inCourse = courses.length > 0 && courseViewRequested;
+  const inCourse = ['course', 'lab', 'materials', 'study'].includes(activeView);
+  const managedTrashCount = allCourses
+    .filter((course) => !course.deletedAt)
+    .reduce((sum, course) => sum + courseTrashItems(course).length, 0);
   if (!hydrated)
     return (
       <main className="loading">
@@ -3916,9 +3631,7 @@ export default function Home() {
       </main>
     );
   return (
-    <main
-      className={`app-shell ${activeView === 'study' && courses.length ? 'chat-mode' : ''}`}
-    >
+    <main className="app-shell">
       {mobileNavOpen && (
         <button
           className="mobile-scrim"
@@ -3932,11 +3645,15 @@ export default function Home() {
           <strong>{preferences.brandName}</strong>
         </button>
         <button
-          className="global-search-trigger"
-          onClick={() => setSearchOpen(true)}
+          className="sidebar-search"
+          onClick={() => {
+            setMobileNavOpen(false);
+            setShowSearch(true);
+          }}
         >
           <Search size={17} />
-          搜索全部内容 <kbd>Ctrl K</kbd>
+          <span>快速查找</span>
+          <kbd>Ctrl K</kbd>
         </button>
         <nav aria-label="主导航">
           <button
@@ -3947,7 +3664,11 @@ export default function Home() {
             今日学习
           </button>
           <button
-            className={activeView === 'knowledge' ? 'active' : ''}
+            className={
+              activeView === 'knowledge' && noteCollection !== 'trash'
+                ? 'active'
+                : ''
+            }
             onClick={() => go('knowledge')}
           >
             <Database size={19} />
@@ -3968,11 +3689,46 @@ export default function Home() {
             }}
           >
             <CalendarDays size={19} />
-            复习
+            复习计划
             {dueNotes.length > 0 && (
               <span className="count">{dueNotes.length}</span>
             )}
           </button>
+        </nav>
+        <div className="sidebar-heading favorites-heading">
+          <span>收藏</span>
+          <Star size={14} />
+        </div>
+        <nav className="favorite-nav" aria-label="收藏笔记">
+          {notes
+            .filter((n) => n.starred)
+            .slice(0, 5)
+            .map((note) => (
+              <button
+                key={note.id}
+                className={
+                  selectedNoteId === note.id && activeView === 'knowledge'
+                    ? 'active'
+                    : ''
+                }
+                onClick={() => openNote(note)}
+                title={note.title}
+              >
+                <FileText size={15} />
+                <span>{note.title}</span>
+              </button>
+            ))}
+          {notes.some((n) => n.starred) ? (
+            <button
+              className="sidebar-more"
+              onClick={() => go('knowledge', { collection: 'starred' })}
+            >
+              查看全部收藏
+              <ChevronRight size={14} />
+            </button>
+          ) : (
+            <p className="sidebar-empty">给常用笔记点个星标，下次一眼找到。</p>
+          )}
         </nav>
         <div className="sidebar-heading">
           <span>课程</span>
@@ -3989,11 +3745,10 @@ export default function Home() {
             <button
               className={inCourse && c.id === activeCourse.id ? 'active' : ''}
               key={c.id}
-              title={c.name}
               onClick={() => {
                 setMaterialChapter('');
                 setMaterialQuery('');
-                go('study', { course: c.id, session: c.sessions[0]?.id });
+                go('course', { course: c.id, session: c.sessions[0]?.id });
               }}
             >
               <span className={`course-dot tone-${index % 4}`} />
@@ -4002,26 +3757,35 @@ export default function Home() {
           ))}
         </nav>
         <div className="sidebar-footer">
+          <button
+            className={
+              noteCollection === 'trash' && activeView === 'knowledge'
+                ? 'active'
+                : ''
+            }
+            onClick={() => go('knowledge', { collection: 'trash' })}
+          >
+            <Trash2 size={17} />
+            回收站
+            {deletedNotes.length + deletedCourses.length + managedTrashCount >
+              0 && (
+              <span className="trash-count">
+                {deletedNotes.length +
+                  deletedCourses.length +
+                  managedTrashCount}
+              </span>
+            )}
+          </button>
           <button onClick={() => setShowSettings(true)}>
             <Settings2 size={18} />
             设置与备份
           </button>
-          <button onClick={() => openSettings('data')}>
-            <Trash2 size={18} />
-            回收站（{trash.length}）
-          </button>
-          <small
-            title={
-              savedAt
-                ? `最近保存：${savedAt}`
-                : '学习数据保存在本机服务中，不代表云端备份'
-            }
-          >
+          <small>
             {syncStatus === 'saving'
               ? '正在保存…'
               : syncStatus === 'offline'
-                ? '保存失败'
-                : `已保存到本机${savedAt ? ' · ' + savedAt : ''}`}
+                ? '有更改尚未保存'
+                : '所有更改已保存'}
           </small>
         </div>
       </aside>
@@ -4042,10 +3806,19 @@ export default function Home() {
                 : activeView === 'graph'
                   ? '知识图谱'
                   : activeView === 'review'
-                    ? '复习'
-                    : '全部笔记'}
+                    ? '复习计划'
+                    : noteCollectionLabel}
           </span>
           <div className="topbar-end">
+            <button
+              className="topbar-search"
+              onClick={() => setShowSearch(true)}
+              aria-label="全局搜索（Ctrl K）"
+            >
+              <Search size={16} />
+              <span>搜索笔记与课程</span>
+              <kbd>Ctrl K</kbd>
+            </button>
             <span>{preferences.userName}</span>
             <button
               className="avatar"
@@ -4059,29 +3832,38 @@ export default function Home() {
         {syncError && (
           <div className="sync-error" role="alert">
             <span>{syncError}</span>
+            {allCourses.some((course) =>
+              course.guide?.chapters.some(
+                (chapter) => chapter.lesson && !chapter.lesson.deletedAt,
+              ),
+            ) && (
+              <button onClick={() => void syncNewLessons()}>
+                同步新生成的讲解
+              </button>
+            )}
             <button
               onClick={() =>
                 download(
                   JSON.stringify(workspaceState, null, 2),
-                  `课伴本机数据副本-${localDate()}.json`,
+                  `课伴正文备份-${localDate()}.json`,
                   'application/json',
                 )
               }
             >
-              下载本机数据副本（不含附件）
+              下载正文备份（不含附件）
             </button>
           </div>
         )}
         <div className="page-stage">
-          {viewStack.length > 0 && (
-            <div className="back-bar">
-              <button onClick={goBack}>
-                <ArrowLeft size={15} />
-                返回上一界面
-              </button>
-            </div>
-          )}
-          {inCourse && (
+          <aside className="version-strip">
+            <span>
+              <strong>研学增强版</strong> · 与原版分别保存 · 示例内容可直接浏览
+            </span>
+            <button onClick={() => go('lab', { course: activeCourse.id })}>
+              教材校准与自测 →
+            </button>
+          </aside>
+          {inCourse && courses.length > 0 && (
             <>
               <div className="course-heading">
                 <div>
@@ -4091,20 +3873,19 @@ export default function Home() {
                   </p>
                   <h1>{activeCourse.name}</h1>
                 </div>
-                <div className="course-actions">
-                  <button
-                    className="danger course-delete-button"
-                    disabled={isSending || !!uploadProgress}
-                    onClick={() => setPendingCourseDelete(activeCourse)}
-                  >
-                    <Trash2 size={17} />
-                    删除课程
-                  </button>
+                <div className="actions">
                   <button
                     onClick={() => go('knowledge', { filter: activeCourse.id })}
                   >
                     <BookOpen size={17} />
                     课程笔记 {courseNotes.length}
+                  </button>
+                  <button
+                    className="course-delete-action"
+                    onClick={() => setPendingDeleteCourse(activeCourse)}
+                  >
+                    <Trash2 size={16} />
+                    删除课程
                   </button>
                 </div>
               </div>
@@ -4121,10 +3902,75 @@ export default function Home() {
               </nav>
             </>
           )}
-          {activeView === 'home' || (courseViewRequested && !courses.length) ? (
+          {inCourse && !courses.length ? (
+            <section className="empty panel">
+              <BookOpen size={30} />
+              <h2>从一门课程开始</h2>
+              <p>添加新课程，或到回收站恢复之前的课程。</p>
+              <button
+                className="primary"
+                onClick={() => setNewCourseOpen(true)}
+              >
+                添加课程
+              </button>
+              <button onClick={() => go('knowledge', { collection: 'trash' })}>
+                打开回收站
+              </button>
+            </section>
+          ) : activeView === 'home' ? (
             homeView()
           ) : activeView === 'course' ? (
             courseView()
+          ) : activeView === 'lab' ? (
+            <StudyLab
+              key={activeCourse.id}
+              course={activeCourse}
+              model={model}
+              disabled={!!syncError || syncStatus === 'offline'}
+              onChange={(studyLab) =>
+                updateCourse(activeCourse.id, (c) => ({ ...c, studyLab }))
+              }
+              onSource={setSource}
+              onChapter={(chapter) =>
+                go('course', { course: activeCourse.id, chapter })
+              }
+              onAsk={askFromGuide}
+              onAddChapter={(chapter) =>
+                updateCourse(activeCourse.id, (c) =>
+                  c.guide &&
+                  c.guide.chapters.length < 16 &&
+                  !c.guide.chapters.some((ch) => ch.title === chapter.title)
+                    ? {
+                        ...c,
+                        guide: {
+                          ...c.guide,
+                          updatedAt: new Date().toISOString(),
+                          chapters: [...c.guide.chapters, chapter],
+                        },
+                      }
+                    : c,
+                )
+              }
+              onPlan={(plan, check) => {
+                setReviewPlans((current) =>
+                  current.some((p) => p.id === plan.id)
+                    ? current
+                    : [...current, plan],
+                );
+                updateCourse(activeCourse.id, (c) => ({
+                  ...c,
+                  studyLab: {
+                    ...c.studyLab,
+                    checks: c.studyLab?.checks?.map((item) =>
+                      item.id === check.id
+                        ? { ...item, planId: plan.id }
+                        : item,
+                    ),
+                  },
+                }));
+                setToast('自测后的复习安排已保存。');
+              }}
+            />
           ) : activeView === 'materials' ? (
             materialsView()
           ) : activeView === 'study' ? (
@@ -4148,107 +3994,182 @@ export default function Home() {
           )}
         </div>
       </section>
-      {!draftNote && drafts.length > 0 && (
-        <aside className="draft-recovery" aria-label="未完成草稿">
-          <details>
-            <summary>未完成草稿（{drafts.length}）</summary>
-            {drafts.map((n) => (
-              <button
-                key={n.id}
-                onClick={() => {
-                  setDraftOrigin(null);
-                  setDraftNote(n);
-                  setReadingSide(false);
-                }}
-              >
-                {n.course} · {n.title || '未命名草稿'} · 继续编辑
-              </button>
-            ))}
-          </details>
-        </aside>
-      )}
-      {draftError && (
-        <p className="draft-warning" role="alert">
-          {draftError}
-        </p>
-      )}
-      {searchOpen && (
+      {showSearch && (
         <Modal
-          labelId="global-search-title"
+          labelId="quick-search-title"
           wide
-          onClose={() => setSearchOpen(false)}
+          onClose={() => setShowSearch(false)}
+        >
+          <QuickSearch
+            notes={notes}
+            courses={courses}
+            onClose={() => setShowSearch(false)}
+            onNote={(note) => {
+              setShowSearch(false);
+              openNote(note);
+            }}
+            onCourse={(id) => {
+              setShowSearch(false);
+              go('course', { course: id });
+            }}
+            onNew={() => {
+              setShowSearch(false);
+              startNote();
+            }}
+            onGraph={() => {
+              setShowSearch(false);
+              go('graph');
+            }}
+          />
+        </Modal>
+      )}
+      {pendingRemoval && (
+        <Modal
+          labelId="managed-delete-title"
+          onClose={() => setPendingRemoval(null)}
         >
           <div className="modal-heading">
-            <h2 id="global-search-title">搜索全部内容</h2>
-            <button onClick={() => setSearchOpen(false)}>关闭搜索</button>
+            <h2 id="managed-delete-title">移入回收站？</h2>
+            <button
+              className="icon-button"
+              aria-label="取消删除"
+              onClick={() => setPendingRemoval(null)}
+            >
+              <X size={18} />
+            </button>
           </div>
-          <input
-            aria-label="搜索全部内容"
-            ref={globalSearchRef}
-            placeholder="搜索课程、笔记、资料、任务或对话"
-            value={globalQuery}
-            onChange={(e) => setGlobalQuery(e.target.value)}
-          />
-          <div className="search-results">
-            {searchWorkspace(workspaceState, globalQuery).map((hit) => (
-              <button key={hit.key} onClick={() => openSearchHit(hit)}>
-                <small>
-                  {hit.kind} · {hit.course}
-                </small>
-                <strong>{hit.title}</strong>
-                <span>{hit.excerpt}</span>
-              </button>
-            ))}
-            {globalQuery &&
-              !searchWorkspace(workspaceState, globalQuery).length && (
-                <p>没有找到相关内容，试试更短的关键词。</p>
-              )}
-            {!globalQuery && (
-              <p>输入关键词即可搜索；只包含已有内容与成功解析的资料正文。</p>
-            )}
+          <p className="delete-note-name">{pendingRemoval.title}</p>
+          <p className="muted">
+            {pendingRemoval.kind === 'chapter'
+              ? '该章节的资料和笔记会保留并移到未分类，导览中的同名章节一起移入回收站。恢复时可还原未重新分类的内容。'
+              : pendingRemoval.kind === 'session'
+                ? '对话及消息会隐藏，已摘录的笔记保留。可以从回收站恢复。'
+                : pendingRemoval.kind === 'message'
+                  ? '这条消息会隐藏，后续问答不再发送它。已摘录的笔记保留。'
+                  : '移除这份导览，课程、资料和已有笔记保留。可以从回收站恢复。'}
+          </p>
+          <div className="actions modal-footer">
+            <button onClick={() => setPendingRemoval(null)}>取消</button>
+            <button className="danger" onClick={removeManagedItem}>
+              <Trash2 size={16} />
+              确认移入回收站
+            </button>
+          </div>
+        </Modal>
+      )}
+      {pendingDeleteCourse && (
+        <Modal
+          labelId="delete-course-title"
+          onClose={() => setPendingDeleteCourse(null)}
+        >
+          <div className="modal-heading">
+            <h2 id="delete-course-title">将课程移入回收站？</h2>
+            <button
+              className="icon-button"
+              aria-label="取消删除课程"
+              onClick={() => setPendingDeleteCourse(null)}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <p className="delete-note-name">{pendingDeleteCourse.name}</p>
+          <div className="course-delete-summary">
+            <span>{pendingDeleteCourse.materials.length} 份资料</span>
+            <span>
+              {
+                allNotes.filter((note) =>
+                  belongsToCourse(note, pendingDeleteCourse),
+                ).length
+              }{' '}
+              篇笔记
+            </span>
+            <span>
+              {
+                reviewPlans.filter(
+                  (plan) =>
+                    plan.courseId === pendingDeleteCourse.id && !plan.deletedAt,
+                ).length
+              }{' '}
+              份计划
+            </span>
+          </div>
+          <p className="muted">
+            课程及其资料、对话、笔记和复习计划会一起隐藏，图谱和搜索也会同步。可以从回收站整门恢复；原本单独删除的笔记仍留在回收站。
+          </p>
+          <div className="actions modal-footer">
+            <button onClick={() => setPendingDeleteCourse(null)}>取消</button>
+            <button className="danger" onClick={moveCourseToTrash}>
+              <Trash2 size={16} />
+              删除课程并保留恢复
+            </button>
+          </div>
+        </Modal>
+      )}
+      {pendingDeleteNote && (
+        <Modal
+          labelId="delete-note-title"
+          onClose={() => setPendingDeleteNote(null)}
+        >
+          <div className="modal-heading">
+            <h2 id="delete-note-title">将笔记移入回收站？</h2>
+            <button
+              className="icon-button"
+              aria-label="取消删除"
+              onClick={() => setPendingDeleteNote(null)}
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <p className="delete-note-name">{pendingDeleteNote.title}</p>
+          <p className="muted">
+            笔记将从列表、搜索和图谱中隐藏。正文、收藏和关联都会保留，可以在回收站恢复。
+          </p>
+          <div className="actions modal-footer">
+            <button onClick={() => setPendingDeleteNote(null)}>取消</button>
+            <button className="danger" onClick={moveNoteToTrash}>
+              <Trash2 size={17} />
+              移入回收站
+            </button>
           </div>
         </Modal>
       )}
       {newCourseOpen && (
-        <Modal
-          labelId="new-course-title"
+        <CourseGuideEditor
+          courseName=""
+          model={model}
+          isNew
           onClose={() => setNewCourseOpen(false)}
-        >
-          <div className="modal-heading">
-            <h2 id="new-course-title">添加课程</h2>
-            <button
-              className="icon-button"
-              aria-label="关闭"
-              onClick={() => setNewCourseOpen(false)}
-            >
-              <X size={20} />
-            </button>
-          </div>
-          <form className="form-stack" onSubmit={addCourse}>
-            <label>
-              课程名称
-              <input
-                maxLength={60}
-                value={courseName}
-                onChange={(e) => setCourseName(e.target.value)}
-                placeholder="例如：概率论与数理统计"
-              />
-            </label>
-            <button className="primary" type="submit">
-              创建并上传资料
-              <ChevronRight size={17} />
-            </button>
-          </form>
-        </Modal>
+          onSave={(name, guide) => addCourse(name, guide)}
+          onCreateEmpty={(name, upload) => addCourse(name, undefined, upload)}
+        />
       )}
-      {draftNote && !(activeView === 'materials' && readingSide) && (
-        <Modal labelId="draft-title" wide onClose={() => setDraftClose(true)}>
+      {guideEditorId &&
+        courses.some((course) => course.id === guideEditorId) &&
+        (() => {
+          const course = courses.find((item) => item.id === guideEditorId)!;
+          return (
+            <CourseGuideEditor
+              key={course.id}
+              courseName={course.name}
+              guide={course.guide}
+              model={model}
+              onClose={() => setGuideEditorId('')}
+              onSave={(_name, guide) => {
+                updateCourse(course.id, (current) => ({ ...current, guide }));
+                setGuideEditorId('');
+                setToast('课程导览已保存');
+              }}
+            />
+          );
+        })()}
+      {draftNote && (
+        <Modal labelId="draft-title" wide onClose={() => setDraftNote(null)}>
           <div className="modal-heading">
             <h2 id="draft-title">整理成一条知识笔记</h2>
             <button
               className="icon-button"
               aria-label="关闭草稿"
-              onClick={() => setDraftClose(true)}
+              onClick={() => setDraftNote(null)}
             >
               <X size={20} />
             </button>
@@ -4320,7 +4241,6 @@ export default function Home() {
             <label>
               笔记正文
               <textarea
-                aria-label="笔记正文"
                 required
                 rows={9}
                 value={draftNote.text}
@@ -4338,56 +4258,30 @@ export default function Home() {
                 }
               />
             </label>
-            <label className="check-label">
-              <input
-                type="checkbox"
-                checked={!!draftNote.reviewAt}
-                onChange={(e) =>
-                  setDraftNote({
-                    ...draftNote,
-                    reviewAt: e.target.checked ? localDate() : undefined,
-                  })
-                }
-              />
-              加入复习
-            </label>
-            <small className="muted">
-              草稿自动暂存在当前浏览器；保存时保留引用来源。
-            </small>
+            {draftNote.guideChapterId ? (
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={!!draftNote.reviewAt}
+                  onChange={(event) =>
+                    setDraftNote({
+                      ...draftNote,
+                      reviewAt: event.target.checked ? localDate() : undefined,
+                    })
+                  }
+                />
+                保存后加入今日复习
+              </label>
+            ) : (
+              <small className="muted">
+                保留引用来源，保存后加入今日复习。
+              </small>
+            )}
             <button className="primary" type="submit">
               <Save size={17} />
               保存笔记
             </button>
           </form>
-        </Modal>
-      )}
-      {draftClose && draftNote && (
-        <Modal labelId="draft-close-title" onClose={() => setDraftClose(false)}>
-          <h2 id="draft-close-title">如何处理这份草稿？</h2>
-          <p>保留后可从“未完成草稿”继续编辑。</p>
-          {draftError && <p role="alert">{draftError}</p>}
-          <div className="button-row">
-            <button onClick={() => setDraftClose(false)}>继续编辑</button>
-            <button
-              disabled={!!draftError}
-              onClick={() => {
-                setDraftNote(null);
-                setDraftClose(false);
-                setToast('草稿已保留');
-              }}
-            >
-              保留草稿
-            </button>
-            <button
-              className="danger"
-              onClick={() => {
-                discardDraft(draftNote.id);
-                setDraftClose(false);
-              }}
-            >
-              放弃修改
-            </button>
-          </div>
         </Modal>
       )}
       {source && (
@@ -4405,9 +4299,7 @@ export default function Home() {
             </button>
           </div>
           <p className="muted">{source.section} · 提取原文，供人工核对</p>
-          <blockquote className="source-quote">
-            <mark>{source.quote}</mark>
-          </blockquote>
+          <blockquote className="source-quote">{source.quote}</blockquote>
           {source.fileId && (
             <a
               className="button primary"
@@ -4420,210 +4312,13 @@ export default function Home() {
           )}
         </Modal>
       )}
-      {recordEdit && (
-        <Modal labelId="record-edit-title" onClose={() => setRecordEdit(null)}>
-          <h2 id="record-edit-title">
-            {
-              {
-                chapter: '修改章节',
-                session: '修改对话标题',
-                material: '资料重命名',
-                task: '编辑任务',
-                message: '编辑消息',
-              }[recordEdit.kind]
-            }
-          </h2>
-          <form className="form-stack" onSubmit={saveRecord}>
-            <label>
-              {recordEdit.kind === 'message' ? '消息内容' : '名称'}
-              {recordEdit.kind === 'message' ? (
-                <textarea
-                  aria-label="消息内容"
-                  required
-                  rows={8}
-                  value={recordEdit.title}
-                  onChange={(e) =>
-                    setRecordEdit({ ...recordEdit, title: e.target.value })
-                  }
-                />
-              ) : (
-                <input
-                  required
-                  maxLength={recordEdit.kind === 'material' ? 255 : 100}
-                  value={recordEdit.title}
-                  onChange={(e) =>
-                    setRecordEdit({ ...recordEdit, title: e.target.value })
-                  }
-                />
-              )}
-            </label>
-            {recordEdit.kind === 'task' && (
-              <>
-                <label>
-                  学习内容
-                  <textarea
-                    rows={4}
-                    aria-label="学习内容"
-                    value={recordEdit.content ?? ''}
-                    onChange={(e) =>
-                      setRecordEdit({ ...recordEdit, content: e.target.value })
-                    }
-                  />
-                </label>
-                <label>
-                  类型
-                  <select
-                    aria-label="类型"
-                    value={recordEdit.taskKind}
-                    onChange={(e) =>
-                      setRecordEdit({
-                        ...recordEdit,
-                        taskKind: e.target.value as 'learn' | 'review',
-                      })
-                    }
-                  >
-                    <option value="learn">学习</option>
-                    <option value="review">复习</option>
-                  </select>
-                </label>
-                <label>
-                  关联课程
-                  <select
-                    aria-label="关联课程"
-                    value={recordEdit.courseId}
-                    onChange={(e) =>
-                      setRecordEdit({ ...recordEdit, courseId: e.target.value })
-                    }
-                  >
-                    <option value="">不关联</option>
-                    {courses.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  计划日期
-                  <input
-                    type="date"
-                    value={recordEdit.date ?? ''}
-                    onChange={(e) =>
-                      setRecordEdit({ ...recordEdit, date: e.target.value })
-                    }
-                  />
-                </label>
-              </>
-            )}
-            {recordEdit.kind === 'message' && (
-              <p className="muted">
-                修改会用于后续对话；已有回答和已保存笔记不会自动重写。
-              </p>
-            )}
-            {recordError && (
-              <p className="error" role="alert">
-                {recordError}
-              </p>
-            )}
-            <div className="actions">
-              <button type="button" onClick={() => setRecordEdit(null)}>
-                取消
-              </button>
-              <button
-                className="primary"
-                type="submit"
-                disabled={
-                  (recordEdit.kind === 'session' ||
-                    recordEdit.kind === 'message') &&
-                  isSending
-                }
-              >
-                保存修改
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
-      {recordDelete && (
-        <Modal
-          labelId="record-delete-title"
-          onClose={() => setRecordDelete(null)}
-        >
-          <h2 id="record-delete-title">删除“{recordDelete.title}”？</h2>
-          <p>
-            {recordDelete.kind === 'chapter'
-              ? '仅删除章节分类，原资料和笔记保留并归入“未分类”。'
-              : recordDelete.kind === 'session'
-                ? '将删除整段对话，已保存的笔记和原文引用保留。'
-                : recordDelete.kind === 'message'
-                  ? '仅删除这条消息，其他消息和已保存笔记保留。'
-                  : '将删除这项学习任务及其内容。'}
-            此操作无法撤销。
-          </p>
-          <div className="actions">
-            <button onClick={() => setRecordDelete(null)}>取消</button>
-            <button
-              className="danger"
-              disabled={
-                (recordDelete.kind === 'session' ||
-                  recordDelete.kind === 'message') &&
-                isSending
-              }
-              onClick={deleteRecord}
-            >
-              确认删除
-            </button>
-          </div>
-        </Modal>
-      )}
-      {pendingCourseDelete && (
-        <Modal
-          labelId="remove-course-title"
-          onClose={() => setPendingCourseDelete(null)}
-        >
-          <h2 id="remove-course-title">
-            删除课程“{pendingCourseDelete.name}”？
-          </h2>
-          <p>
-            课程、资料列表、笔记、复习记录、对话和任务将移入回收站，可在“设置与备份”中恢复。
-          </p>
-          <p className="muted">
-            已上传的原文件保留，以便其他笔记中的引用链接继续使用。
-          </p>
-          <div className="actions">
-            <button onClick={() => setPendingCourseDelete(null)}>取消</button>
-            <button
-              className="danger"
-              disabled={isSending || !!uploadProgress}
-              onClick={removeCourse}
-            >
-              确认删除课程
-            </button>
-          </div>
-        </Modal>
-      )}
-      {pendingNoteDelete && (
-        <Modal
-          labelId="remove-note-title"
-          onClose={() => setPendingNoteDelete(null)}
-        >
-          <h2 id="remove-note-title">删除笔记“{pendingNoteDelete.title}”？</h2>
-          <p>
-            笔记及复习记录将移入回收站，并暂时从知识图谱中移除。可在“设置与备份”中恢复。
-          </p>
-          <div className="actions">
-            <button onClick={() => setPendingNoteDelete(null)}>取消</button>
-            <button className="danger" onClick={removeNote}>
-              确认删除笔记
-            </button>
-          </div>
-        </Modal>
-      )}
       {pendingDelete && (
         <Modal labelId="remove-title" onClose={() => setPendingDelete(null)}>
-          <h2 id="remove-title">从课程移除资料？</h2>
+          <h2 id="remove-title">将资料移入回收站？</h2>
           <p>{pendingDelete.name}</p>
-          <p className="muted">已保存笔记中的原文链接仍可使用。</p>
+          <p className="muted">
+            可在回收站恢复，已保存笔记中的原文链接仍可使用。
+          </p>
           <div className="actions">
             <button onClick={() => setPendingDelete(null)}>取消</button>
             <button className="danger" onClick={removeMaterial}>
@@ -4633,147 +4328,99 @@ export default function Home() {
         </Modal>
       )}
       {showSettings && (
-        <Modal
-          labelId="settings-title"
-          onClose={() => {
-            if (!dataBusy) setShowSettings(false);
-          }}
-        >
+        <Modal labelId="settings-title" onClose={() => setShowSettings(false)}>
           <div className="modal-heading">
             <h2 id="settings-title">设置与备份</h2>
             <button
               className="icon-button"
-              disabled={dataBusy}
               aria-label="关闭设置"
               onClick={() => setShowSettings(false)}
             >
               <X size={20} />
             </button>
           </div>
-          <fieldset className="settings-tabs" aria-label="设置分类">
-            {(
-              [
-                ['personal', '个人偏好'],
-                ['ai', 'AI 服务'],
-                ['data', '数据管理'],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                aria-pressed={settingsTab === id}
-                onClick={() => setSettingsTab(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </fieldset>
-          <fieldset className="form-stack settings-fields" disabled={dataBusy}>
-            {settingsTab === 'personal' && (
-              <>
-                <label>
-                  空间名称
-                  <input
-                    value={preferences.brandName}
-                    maxLength={12}
-                    onChange={(e) =>
-                      setPreferences({
-                        ...preferences,
-                        brandName: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  你的称呼
-                  <input
-                    value={preferences.userName}
-                    maxLength={16}
-                    onChange={(e) =>
-                      setPreferences({
-                        ...preferences,
-                        userName: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-                <label>
-                  当前学期
-                  <input
-                    value={preferences.semester}
-                    onChange={(e) =>
-                      setPreferences({
-                        ...preferences,
-                        semester: e.target.value,
-                      })
-                    }
-                  />
-                </label>
-              </>
-            )}
-            {settingsTab === 'ai' && (
-              <AISettings
-                onSaved={() => {
-                  setModel('');
-                  setToast('AI 设置已保存，后续请求使用新配置');
-                }}
+          <div className="form-stack">
+            <label>
+              空间名称
+              <input
+                value={preferences.brandName}
+                maxLength={12}
+                onChange={(e) =>
+                  setPreferences({ ...preferences, brandName: e.target.value })
+                }
               />
-            )}
-            {settingsTab === 'data' && (
-              <>
-                <p className="muted">
-                  最近下载完整备份：{backupAt || '本浏览器暂无记录'}
-                  。本机保存不等于备份。
-                </p>
-                {(!backupAt ||
-                  !Number.isFinite(Date.parse(backupAt)) ||
-                  backupCheckAt - Date.parse(backupAt) > 7 * 86400000) && (
-                  <output className="notice">
-                    建议下载一份完整备份并存到另一设备；当前没有最近 7
-                    天的备份下载记录。
-                  </output>
+            </label>
+            <label>
+              你的称呼
+              <input
+                value={preferences.userName}
+                maxLength={16}
+                onChange={(e) =>
+                  setPreferences({ ...preferences, userName: e.target.value })
+                }
+              />
+            </label>
+            <label>
+              当前学期
+              <input
+                value={preferences.semester}
+                onChange={(e) =>
+                  setPreferences({ ...preferences, semester: e.target.value })
+                }
+              />
+            </label>
+            <label>
+              默认模型
+              <select value={model} onChange={(e) => setModel(e.target.value)}>
+                {(aiSettings?.models ?? [{ id: model, name: model }]).map(
+                  ({ id, name }) => (
+                    <option key={id} value={id}>
+                      {name}
+                    </option>
+                  ),
                 )}
-                <DataManagement
-                  trash={trash}
-                  run={manageBackup}
-                  restore={(id) => {
-                    applyState(restoreEntry(workspaceState, id));
-                    setUndoDelete('');
-                    setToast('已从回收站恢复');
-                  }}
-                  remove={(id) =>
-                    setTrash((current) =>
-                      current.filter((item) => item.id !== id),
-                    )
-                  }
-                />
-              </>
-            )}
+              </select>
+            </label>
+            <small className="ai-service-status">
+              {aiSettings
+                ? `${aiSettings.provider} · ${aiSettings.configured ? '已配置密钥' : '尚未配置密钥'}`
+                : '正在读取 AI 服务配置…'}
+              <br />
+              密钥保存在本机服务端，不会写入课程备份。
+            </small>
             <button
-              className="settings-close"
-              onClick={() => setShowSettings(false)}
+              onClick={() =>
+                download(
+                  JSON.stringify(workspaceState, null, 2),
+                  `课伴正文备份-${localDate()}.json`,
+                  'application/json',
+                )
+              }
             >
-              关闭
+              <Download size={17} />
+              导出正文 JSON
             </button>
-          </fieldset>
+            <small className="muted">
+              正文 JSON 不含附件字节。跨电脑迁移请使用下方“含附件迁移包”。
+            </small>
+            <BackupPanel
+              onExport={exportMigration}
+              onRestore={restoreMigration}
+              onDemo={addDemoCourse}
+              disabled={
+                !hydrated ||
+                !!syncError ||
+                syncStatus === 'offline' ||
+                isSending
+              }
+            />
+            <button className="primary" onClick={() => setShowSettings(false)}>
+              完成
+            </button>
+          </div>
         </Modal>
       )}
-      {(toast || (undoDelete && trash.some((t) => t.id === undoDelete))) && (
-        <output className="toast">
-          {toast || '已移入回收站'}
-          {undoDelete && trash.some((t) => t.id === undoDelete) && (
-            <>
-              <button onClick={undoDeletion}>撤销删除</button>
-              <button onClick={() => openSettings('data')}>查看回收站</button>
-              <button
-                aria-label="关闭删除提示"
-                onClick={() => setUndoDelete('')}
-              >
-                ×
-              </button>
-            </>
-          )}
-        </output>
-      )}
+      {toast && <output className="toast">{toast}</output>}
     </main>
   );
 }

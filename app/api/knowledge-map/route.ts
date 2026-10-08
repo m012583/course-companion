@@ -1,5 +1,5 @@
-import { readAIConfig } from '@/lib/ai-settings';
 import { noteFingerprint, parseConceptGraph } from '@/lib/note-graph';
+import { resolveModel, providerOptions } from '@/lib/ai-provider';
 export async function POST(request: Request) {
   if (
     request.headers.get('origin') &&
@@ -26,16 +26,7 @@ export async function POST(request: Request) {
       { error: '这篇笔记超过 24,000 字符，请先拆分为几篇主题笔记再生成。' },
       { status: 413 },
     );
-  const config = await readAIConfig();
-  const apiKey = config.apiKey;
-  if (apiKey && !/^[\x21-\x7E]+$/.test(apiKey))
-    return Response.json(
-      {
-        error:
-          'AI 密钥格式不正确，请仅填写服务平台生成的密钥，不要包含说明文字或空格。',
-      },
-      { status: 503 },
-    );
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey)
     return Response.json(
       { error: '尚未连接 AI 服务。关联笔记图谱仍可直接使用。' },
@@ -45,7 +36,7 @@ export async function POST(request: Request) {
     content = body.content;
   try {
     const response = await fetch(
-      `${config.baseUrl.replace(/\/$/, '')}/chat/completions`,
+      `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: {
@@ -53,13 +44,12 @@ export async function POST(request: Request) {
           Authorization: `Bearer ${apiKey}`,
           'User-Agent': 'course-knowledge-base/0.2',
         },
-        signal: AbortSignal.any([request.signal, AbortSignal.timeout(90000)]),
-        redirect: 'manual',
+        signal: AbortSignal.timeout(90000),
         body: JSON.stringify({
-          model:
-            typeof body.model === 'string' && body.model
-              ? body.model
-              : config.model,
+          model: resolveModel(
+            typeof body.model === 'string' ? body.model : undefined,
+          ),
+          ...providerOptions(),
           temperature: 0.1,
           max_tokens: 2400,
           messages: [
@@ -108,7 +98,7 @@ export async function POST(request: Request) {
             : error instanceof SyntaxError
               ? '模型返回的图谱格式不正确，请重试。'
               : error instanceof Error
-                ? '服务请求失败，请检查连接后重试。'
+                ? error.message
                 : '生成失败，已有图谱已保留。',
       },
       { status: 502 },

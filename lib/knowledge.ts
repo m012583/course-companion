@@ -31,13 +31,9 @@ export type Material = {
   passages?: Passage[];
   coverage?: Coverage;
   chapter?: string;
+  deletedAt?: string;
 };
 export type Note = {
-  reviewHistory?: {
-    at: string;
-    answer: string;
-    rating: 'again' | 'hard' | 'good';
-  }[];
   id: string;
   title: string;
   text: string;
@@ -57,6 +53,10 @@ export type Note = {
   relatedLabels?: Record<string, string>;
   conceptGraph?: ConceptGraph;
   graphPositions?: Record<string, NodePosition>;
+  starred?: boolean;
+  lastOpenedAt?: string;
+  deletedAt?: string;
+  guideChapterId?: string;
 };
 export function normalizeMath(text: string) {
   // Providers often emit LaTeX delimiters even when Markdown was requested.
@@ -114,28 +114,15 @@ export function selectNotes(
       (b.updatedAt ?? b.createdAt).localeCompare(a.updatedAt ?? a.createdAt),
     );
 }
-export function scheduleReview(
-  note: Note,
-  rating: boolean | 'again' | 'hard' | 'good',
-  now = new Date(),
-) {
-  const grade =
-    typeof rating === 'boolean' ? (rating ? 'good' : 'again') : rating;
-  const prior = Math.max(0, Math.floor(note.reviewCount ?? 0));
-  const count = grade === 'good' ? prior + 1 : grade === 'hard' ? prior : 0;
-  const goodDays = [3, 7, 14, 30, 60][Math.min(prior, 4)];
-  const days =
-    grade === 'again'
-      ? 1
-      : grade === 'hard'
-        ? Math.max(2, Math.floor(goodDays / 2))
-        : goodDays;
+export function scheduleReview(note: Note, correct: boolean, now = new Date()) {
+  const count = correct ? (note.reviewCount ?? 0) + 1 : 0;
+  const days = correct ? [1, 3, 7, 14, 30][Math.min(count - 1, 4)] : 1;
   const next = new Date(now);
   next.setDate(next.getDate() + days);
   return {
     reviewCount: count,
     reviewAt: localDate(next),
-    mastery: grade === 'good' && count >= 3 ? '已掌握' : '复习中',
+    mastery: correct && count >= 3 ? '已掌握' : '复习中',
     updatedAt: now.toISOString(),
   };
 }
@@ -193,33 +180,12 @@ function terms(text: string) {
     ]),
   ];
 }
-// Exact Chinese words supplement bigrams: one meaningful shared word can
-// locate a passage, while accidental two-character overlaps remain insufficient.
-const segmenter = new Intl.Segmenter('zh-CN', { granularity: 'word' });
-const genericWords = new Set(
-  '这个 那个 这些 那些 什么 为什么 怎么 如何 多少 是否 可以 应该 根据 资料 内容 原文 问题 回答 答案 说明 介绍 相关 提供 进行 使用 学习 知识 我们 你们 他们 一个 一些 其中 这里 那里 这种 情况 方法 结果 要求 系统 输出 服务'.split(
-    ' ',
-  ),
-);
-function chineseWords(text: string) {
-  return new Set(
-    [...segmenter.segment(text)]
-      .filter(
-        (part) =>
-          part.isWordLike &&
-          /^[\u3400-\u9fff]{2,}$/.test(part.segment) &&
-          !genericWords.has(part.segment),
-      )
-      .map((part) => part.segment),
-  );
-}
 export function retrieve(
   question: string,
   materials: Material[],
   maxCharacters = 18000,
 ): Evidence[] {
-  const tokens = terms(question).filter((term) => !genericWords.has(term));
-  const queryWords = chineseWords(question);
+  const tokens = terms(question);
   const ranked = materials
     .flatMap((material) =>
       (material.passages?.length
@@ -227,18 +193,6 @@ export function retrieve(
         : splitPassages(material.content ?? '')
       ).map((passage) => {
         const text = passage.text.toLowerCase();
-        const hits = tokens.filter((term) => text.includes(term));
-        const titleHit = tokens.some((term) =>
-          material.name.toLowerCase().includes(term),
-        );
-        const wordHit =
-          hits.length === 1 &&
-          [...chineseWords(passage.text)].some((word) => queryWords.has(word));
-        const relevant =
-          hits.length >= 2 ||
-          wordHit ||
-          titleHit ||
-          hits.some((term) => /^[a-z0-9_]+$/.test(term));
         const score = tokens.reduce(
           (sum, term) =>
             sum +
@@ -246,7 +200,7 @@ export function retrieve(
             (material.name.toLowerCase().includes(term) ? 0.25 : 0),
           0,
         );
-        return { material, passage, score: relevant ? score : 0 };
+        return { material, passage, score };
       }),
     )
     .filter((item) => item.score > 0)
@@ -276,8 +230,8 @@ export function retrieve(
   const evidence: Evidence[] = [];
   let used = 0;
   for (const { material, passage } of ranked) {
-    if (evidence.length >= 16) break;
-    if (used + passage.text.length > maxCharacters) continue;
+    if (used + passage.text.length > maxCharacters || evidence.length >= 16)
+      break;
     evidence.push({
       id: `S${evidence.length + 1}`,
       name: material.name,
@@ -289,58 +243,4 @@ export function retrieve(
     used += passage.text.length;
   }
   return evidence;
-}
-
-export type PlanSuggestion = { kind: 'review' | 'learn' | 'tip'; text: string };
-
-export function planSuggestions(input: {
-  dueCount: number;
-  upcomingCount: number;
-  courses: Array<{ name: string; materialCount: number; noteCount: number }>;
-  todayTasks: number;
-  doneToday: number;
-}): PlanSuggestion[] {
-  const out: PlanSuggestion[] = [];
-  if (input.dueCount > 0)
-    out.push({
-      kind: 'review',
-      text: `有 ${input.dueCount} 条笔记已到复习日，建议先完成今日复习，再安排新的学习任务。`,
-    });
-  if (input.upcomingCount > 0)
-    out.push({
-      kind: 'review',
-      text: `未来 3 天有 ${input.upcomingCount} 条笔记将进入复习期，可以提前预留时间或提早复习。`,
-    });
-  let limited = 0;
-  for (const c of input.courses) {
-    if (limited >= 2) break;
-    if (c.materialCount > 0 && c.noteCount === 0) {
-      out.push({
-        kind: 'learn',
-        text: `课程「${c.name}」已上传 ${c.materialCount} 份资料但还没有笔记，建议安排一次学习整理。`,
-      });
-      limited++;
-    }
-  }
-  if (input.todayTasks > 4)
-    out.push({
-      kind: 'tip',
-      text: '今天安排的任务偏多，建议按 25 分钟番茄钟拆解，先完成最重要的一项。',
-    });
-  else if (input.doneToday > 0 && input.todayTasks === 0)
-    out.push({
-      kind: 'tip',
-      text: '今日任务已清空。可以安排一项小学习任务保持节奏，例如把一章资料整理成笔记。',
-    });
-  if (out.length < 3)
-    out.push({
-      kind: 'tip',
-      text: '先复习再学新内容效果更好：学习新知识后隔 10 分钟回顾要点，睡前再快速过一遍。',
-    });
-  if (!out.length)
-    out.push({
-      kind: 'tip',
-      text: '从一门课的已有资料中挑一节开始吧——阅读、提问、整理成笔记，完成第一个小任务。',
-    });
-  return out.slice(0, 4);
 }

@@ -1,102 +1,306 @@
-import { z } from 'zod';
-import { parseWorkspace } from './workspace-schema';
-import type { Workspace } from './workspace';
-
-export const MAX_BACKUP_BYTES = 150 * 1024 * 1024;
-export const MAX_FILE_BYTES = 20 * 1024 * 1024;
-export const MAX_TOTAL_BYTES = 100 * 1024 * 1024;
+import { readGuideContent } from './course-guide';
+import { validatePlan, type ReviewPlan } from './review-plans';
+export type BackupState = {
+  courses: Record<string, unknown>[];
+  notes: Record<string, unknown>[];
+  reviewPlans?: Record<string, unknown>[];
+  [key: string]: unknown;
+};
 export type BackupFile = {
   id: string;
   name: string;
   type: string;
-  size: number;
-  sha256: string;
   data: string;
+  sha256: string;
 };
-export type Backup = {
-  format: 'course-companion';
-  version: 1;
-  createdAt: string;
-  state: Workspace;
+export type BackupBundle = {
+  format: 'course-kb-bundle';
+  version: 2;
+  exportedAt: string;
+  state: BackupState;
   files: BackupFile[];
 };
-export function fileIds(value: unknown): string[] {
-  const ids = new Set<string>();
-  function visit(item: unknown) {
-    if (!item || typeof item !== 'object') return;
-    for (const [key, child] of Object.entries(item)) {
-      if (key === 'fileId' && typeof child === 'string' && child)
-        ids.add(child);
-      else if (typeof child === 'object') visit(child);
+const record = (value: unknown): value is Record<string, unknown> =>
+  !!value && typeof value === 'object' && !Array.isArray(value);
+const validEvidence = (value: unknown): value is Record<string, unknown> =>
+  record(value) &&
+  ['id', 'name', 'section', 'quote'].every(
+    (key) => typeof value[key] === 'string',
+  ) &&
+  (value.fileId === undefined || typeof value.fileId === 'string') &&
+  (value.page === undefined ||
+    (Number.isInteger(value.page) && Number(value.page) > 0));
+export function validateWorkspace(value: unknown): BackupState {
+  if (
+    !record(value) ||
+    !Array.isArray(value.courses) ||
+    value.courses.length > 300 ||
+    !Array.isArray(value.notes) ||
+    value.notes.length > 10000
+  )
+    throw new Error('备份缺少有效的课程或笔记数组。');
+  if (JSON.stringify(value).length > 8_000_000)
+    throw new Error('课程正文超过 8 MB，请先拆分。');
+  const ids = new Set();
+  for (const c of value.courses) {
+    if (
+      !record(c) ||
+      typeof c.id !== 'string' ||
+      !c.id ||
+      ids.has(c.id) ||
+      typeof c.name !== 'string' ||
+      !Array.isArray(c.materials) ||
+      !Array.isArray(c.sessions)
+    )
+      throw new Error('课程标识重复或内容格式无效。');
+    ids.add(c.id);
+    if (
+      c.materials.some(
+        (m) =>
+          !record(m) ||
+          typeof m.name !== 'string' ||
+          (m.content !== undefined && typeof m.content !== 'string') ||
+          (m.passages !== undefined &&
+            (!Array.isArray(m.passages) ||
+              m.passages.some(
+                (p) =>
+                  !record(p) ||
+                  typeof p.text !== 'string' ||
+                  typeof p.section !== 'string',
+              ))),
+      )
+    )
+      throw new Error('资料格式无效。');
+    if (
+      c.sessions.some(
+        (s) =>
+          !record(s) ||
+          typeof s.id !== 'string' ||
+          typeof s.title !== 'string' ||
+          !Array.isArray(s.messages) ||
+          s.messages.some(
+            (m) =>
+              !record(m) ||
+              !['user', 'assistant'].includes(String(m.role)) ||
+              typeof m.text !== 'string',
+          ),
+      )
+    )
+      throw new Error('对话格式无效。');
+    if (
+      c.chapters !== undefined &&
+      (!Array.isArray(c.chapters) ||
+        c.chapters.some((x) => typeof x !== 'string'))
+    )
+      throw new Error('章节格式无效。');
+    if (c.guide !== undefined) {
+      if (
+        !record(c.guide) ||
+        !record(c.guide.settings) ||
+        typeof c.guide.settings.level !== 'string' ||
+        typeof c.guide.generatedFor !== 'string' ||
+        !['ai', 'manual'].includes(String(c.guide.source))
+      )
+        throw new Error('导览信息无效。');
+      readGuideContent(c.guide, true);
+    }
+    if (c.studyLab !== undefined) {
+      if (!record(c.studyLab)) throw new Error('研学记录格式无效。');
+      if (
+        c.studyLab.checks !== undefined &&
+        (!Array.isArray(c.studyLab.checks) ||
+          c.studyLab.checks.some(
+            (check) =>
+              !record(check) ||
+              typeof check.id !== 'string' ||
+              typeof check.createdAt !== 'string' ||
+              !['ai', 'demo'].includes(String(check.source)) ||
+              !Array.isArray(check.evidence) ||
+              check.evidence.some((e) => !validEvidence(e)) ||
+              (check.answers !== undefined &&
+                (!Array.isArray(check.answers) ||
+                  check.answers.length !== 2 ||
+                  check.answers.some(
+                    (a) =>
+                      !Number.isInteger(a) || Number(a) < 0 || Number(a) > 3,
+                  ))) ||
+              !Array.isArray(check.questions) ||
+              check.questions.length !== 2 ||
+              check.questions.some(
+                (q) =>
+                  !record(q) ||
+                  typeof q.id !== 'string' ||
+                  typeof q.prompt !== 'string' ||
+                  typeof q.term !== 'string' ||
+                  !Array.isArray(q.options) ||
+                  q.options.length !== 4 ||
+                  q.options.some((o) => typeof o !== 'string') ||
+                  !Number.isInteger(q.correct) ||
+                  Number(q.correct) < 0 ||
+                  Number(q.correct) > 3 ||
+                  typeof q.explanation !== 'string' ||
+                  !Array.isArray(q.sourceIds) ||
+                  !q.sourceIds.length ||
+                  q.sourceIds.some(
+                    (id) =>
+                      typeof id !== 'string' ||
+                      !(check.evidence as Record<string, unknown>[]).some(
+                        (e) => e.id === id,
+                      ),
+                  ),
+              ),
+          ))
+      )
+        throw new Error('自测记录格式无效。');
+      if (
+        c.studyLab.calibration !== undefined &&
+        (!record(c.studyLab.calibration) ||
+          !Array.isArray(c.studyLab.calibration.materialKeys) ||
+          c.studyLab.calibration.materialKeys.some(
+            (k) => typeof k !== 'string',
+          ) ||
+          typeof c.studyLab.calibration.toc !== 'string')
+      )
+        throw new Error('校准记录格式无效。');
     }
   }
-  visit(value);
+  if (
+    value.notes.some(
+      (n) =>
+        !record(n) ||
+        typeof n.id !== 'string' ||
+        typeof n.title !== 'string' ||
+        typeof n.text !== 'string' ||
+        typeof n.course !== 'string',
+    )
+  )
+    throw new Error('笔记格式无效。');
+  if (
+    value.reviewPlans !== undefined &&
+    (!Array.isArray(value.reviewPlans) ||
+      value.reviewPlans.some(
+        (p) =>
+          !record(p) ||
+          typeof p.id !== 'string' ||
+          typeof p.courseId !== 'string' ||
+          !Array.isArray(p.tasks),
+      ))
+  )
+    throw new Error('复习计划格式无效。');
+  for (const plan of (value.reviewPlans ?? []) as ReviewPlan[])
+    if (validatePlan(plan)) throw new Error('复习计划内容无效。');
+  if (
+    value.preferences !== undefined &&
+    (!record(value.preferences) ||
+      ['brandName', 'userName', 'semester'].some(
+        (key) =>
+          typeof (value.preferences as Record<string, unknown>)[key] !==
+          'string',
+      ))
+  )
+    throw new Error('空间设置格式无效。');
+  if (value.model !== undefined && typeof value.model !== 'string')
+    throw new Error('模型设置格式无效。');
+  const safeKeys = [
+    'courses',
+    'notes',
+    'reviewPlans',
+    'courseId',
+    'sessionId',
+    'activeView',
+    'preferences',
+    'model',
+  ];
+  return Object.fromEntries(
+    safeKeys
+      .filter((key) => value[key] !== undefined)
+      .map((key) => [key, value[key]]),
+  ) as BackupState;
+}
+export function collectFileIds(value: unknown): string[] {
+  const ids = new Set<string>();
+  const visit = (item: unknown, depth: number) => {
+    if (depth > 30) throw new Error('备份嵌套过深。');
+    if (Array.isArray(item)) item.forEach((v) => visit(v, depth + 1));
+    else if (record(item))
+      for (const [key, v] of Object.entries(item)) {
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype')
+          throw new Error('备份包含无效字段。');
+        if (key === 'fileId' && typeof v === 'string' && v) ids.add(v);
+        else visit(v, depth + 1);
+      }
+  };
+  visit(value, 0);
   return [...ids];
 }
-export function remapFiles(
-  state: Workspace,
-  mapping: Map<string, string>,
-): Workspace {
-  return JSON.parse(
-    JSON.stringify(state, (key, value: unknown) =>
-      (key === 'fileId' || key === 'materialKey') && typeof value === 'string'
-        ? (mapping.get(value) ?? value)
-        : value,
-    ),
-  ) as Workspace;
+export function remapFileIds<T>(value: T, mapping: Map<string, string>): T {
+  if (Array.isArray(value))
+    return value.map((v) => remapFileIds(v, mapping)) as T;
+  if (record(value))
+    return Object.fromEntries(
+      Object.entries(value).map(([k, v]) => [
+        k,
+        k === 'fileId' && typeof v === 'string'
+          ? (mapping.get(v) ?? v)
+          : k === 'materialKeys' && Array.isArray(v)
+            ? v.map((id) =>
+                typeof id === 'string' ? (mapping.get(id) ?? id) : id,
+              )
+            : remapFileIds(v, mapping),
+      ]),
+    ) as T;
+  return value;
 }
-export function encodeBytes(bytes: Uint8Array): string {
-  let raw = '';
+export function bytesToBase64(bytes: Uint8Array) {
+  let text = '';
   for (let i = 0; i < bytes.length; i += 8192)
-    raw += String.fromCharCode(...bytes.subarray(i, i + 8192));
-  return btoa(raw);
+    text += String.fromCharCode(...bytes.subarray(i, i + 8192));
+  return btoa(text);
 }
-export function decodeBytes(value: string): Uint8Array {
-  return Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
-}
-export async function checksum(bytes: Uint8Array): Promise<string> {
+export async function digest(bytes: Uint8Array) {
   return [
     ...new Uint8Array(
-      await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer),
+      await crypto.subtle.digest('SHA-256', Uint8Array.from(bytes).buffer),
     ),
   ]
     .map((n) => n.toString(16).padStart(2, '0'))
     .join('');
 }
-const schema = z.object({
-  format: z.literal('course-companion'),
-  version: z.literal(1),
-  createdAt: z.string(),
-  state: z.unknown(),
-  files: z.array(
-    z.object({
-      id: z.string().min(1),
-      name: z.string(),
-      type: z.string(),
-      size: z.number().int().min(0).max(MAX_FILE_BYTES),
-      sha256: z.string().regex(/^[a-f0-9]{64}$/),
-      data: z.string().max(Math.ceil(MAX_FILE_BYTES / 3) * 4),
-    }),
-  ),
-});
-export async function validateBackup(value: unknown): Promise<Backup> {
-  const result = schema.safeParse(value);
-  if (!result.success) throw new Error('不是有效的课伴完整备份（版本 1）');
-  const backup = result.data;
-  const state = parseWorkspace(backup.state);
-  if (backup.files.reduce((sum, f) => sum + f.size, 0) > MAX_TOTAL_BYTES)
-    throw new Error('附件总量超过 100 MB');
-  const needed = new Set(fileIds(state));
-  if (
-    backup.files.length !== needed.size ||
-    new Set(backup.files.map((f) => f.id)).size !== needed.size
-  )
-    throw new Error('附件缺失或重复');
-  for (const file of backup.files) {
-    if (!needed.has(file.id)) throw new Error('备份包含未引用附件');
-    const bytes = decodeBytes(file.data);
-    if (bytes.length !== file.size || (await checksum(bytes)) !== file.sha256)
-      throw new Error(`附件校验失败：${file.name}`);
+export function parseBackup(value: unknown) {
+  if (!record(value)) throw new Error('备份文件格式无效。');
+  const bundled = value.format === 'course-kb-bundle';
+  if (value.format && (!bundled || value.version !== 2))
+    throw new Error('不支持该备份版本。');
+  const state = validateWorkspace(bundled ? value.state : value);
+  const ids = collectFileIds(state);
+  const files = bundled ? value.files : [];
+  if (!Array.isArray(files) || files.length > 300)
+    throw new Error('附件数量无效，最多 300 个。');
+  let size = 0;
+  const seen = new Set<string>();
+  for (const f of files) {
+    if (
+      !record(f) ||
+      typeof f.id !== 'string' ||
+      !ids.includes(f.id) ||
+      seen.has(f.id) ||
+      typeof f.name !== 'string' ||
+      f.name.length > 300 ||
+      typeof f.type !== 'string' ||
+      typeof f.data !== 'string' ||
+      f.data.length > 28_000_000 ||
+      f.data.length % 4 !== 0 ||
+      !/^[A-Za-z0-9+/]*={0,2}$/.test(f.data) ||
+      typeof f.sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(f.sha256)
+    )
+      throw new Error('附件清单格式无效。');
+    size += f.data.length;
+    seen.add(f.id);
   }
-  return { ...backup, state };
+  if (size > 70_000_000) throw new Error('附件总量超过 50 MB。');
+  const missing = ids.filter((id) => !seen.has(id));
+  if (bundled && missing.length)
+    throw new Error(`完整备份缺少 ${missing.length} 个附件，未恢复。`);
+  return { state, files: files as BackupFile[], missing, bundled };
 }

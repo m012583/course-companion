@@ -1,4 +1,5 @@
 import type { Note } from './knowledge';
+import { outgoingNoteIds } from './note-navigation';
 
 export type ConceptNode = {
   id: string;
@@ -122,10 +123,11 @@ export function parseConceptGraph(
   };
 }
 export function relatedGraph(note: Note, notes: Note[]) {
+  const outgoing = new Set(outgoingNoteIds(note, notes));
   const related = notes.filter(
     (n) =>
       n.id !== note.id &&
-      (note.relatedIds?.includes(n.id) || n.relatedIds?.includes(note.id)),
+      (outgoing.has(n.id) || outgoingNoteIds(n, notes).includes(note.id)),
   );
   return {
     nodes: [
@@ -138,10 +140,14 @@ export function relatedGraph(note: Note, notes: Note[]) {
     ],
     edges: related.map((n) => ({
       id: `related-${n.id}`,
-      from: note.relatedIds?.includes(n.id) ? note.id : n.id,
-      to: note.relatedIds?.includes(n.id) ? n.id : note.id,
+      from: outgoing.has(n.id) ? note.id : n.id,
+      to: outgoing.has(n.id) ? n.id : note.id,
       label:
-        note.relatedLabels?.[n.id] || n.relatedLabels?.[note.id] || '已关联',
+        note.relatedLabels?.[n.id] ||
+        n.relatedLabels?.[note.id] ||
+        (note.relatedIds?.includes(n.id) || n.relatedIds?.includes(note.id)
+          ? '已关联'
+          : '正文引用'),
     })),
   };
 }

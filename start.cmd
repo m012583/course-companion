@@ -7,7 +7,7 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-node tools\start-local.mjs
+node tools\start-enhanced.mjs
 set "APP_EXIT=%errorlevel%"
 if not "%APP_EXIT%"=="0" pause
 exit /b %APP_EXIT%

@@ -45,7 +45,6 @@ export default function KnowledgeNetwork({
     [selected, setSelected] = useState('');
   const [local, setLocal] = useState(false),
     [depth, setDepth] = useState(1);
-  const [tag, setTag] = useState('');
   const [camera, setCamera] = useState({ x: 0, y: 0, scale: 1 });
   const [moves, setMoves] = useState<Record<string, Point>>({});
   const [linkTo, setLinkTo] = useState(''),
@@ -65,16 +64,14 @@ export default function KnowledgeNetwork({
     );
   const filtered = useMemo(
     () =>
-      notes
-        .filter((n) => !tag || n.tags?.includes(tag))
-        .filter(
-          (n) =>
-            course === 'all' ||
-            n.courseId === course ||
-            (!n.courseId &&
-              n.course === courses.find((c) => c.id === course)?.name),
-        ),
-    [notes, courses, course, tag],
+      notes.filter(
+        (n) =>
+          course === 'all' ||
+          n.courseId === course ||
+          (!n.courseId &&
+            n.course === courses.find((c) => c.id === course)?.name),
+      ),
+    [notes, courses, course],
   );
   const whole = useMemo(() => buildKnowledgeNetwork(filtered), [filtered]);
   const graph = useMemo(
@@ -187,10 +184,6 @@ export default function KnowledgeNetwork({
         <div>
           <p className="eyebrow">把零散笔记连成知识网络</p>
           <h1>知识图谱</h1>
-          <p className="muted">
-            {graph.nodes.length} 篇笔记 · {graph.edges.length} 条关联 ·
-            按课程与标签范围查看
-          </p>
         </div>
         <button onClick={onNew}>
           <Plus size={16} />
@@ -250,22 +243,6 @@ export default function KnowledgeNetwork({
           ))}
         </select>
         <div className="network-modes" aria-label="图谱范围">
-          <select
-            aria-label="图谱标签范围"
-            value={tag}
-            onChange={(e) => {
-              setTag(e.target.value);
-              setSelected('');
-              setLocal(false);
-            }}
-          >
-            <option value="">全部标签</option>
-            {[...new Set(notes.flatMap((n) => n.tags ?? []))]
-              .sort()
-              .map((value) => (
-                <option key={value}>{value}</option>
-              ))}
-          </select>
           <button aria-pressed={!local} onClick={() => setLocal(false)}>
             全部知识
           </button>
@@ -298,20 +275,9 @@ export default function KnowledgeNetwork({
       {!whole.nodes.length ? (
         <div className="graph-empty">
           <Network size={32} />
-          <h3>
-            {notes.length ? '当前课程或标签下没有笔记' : '从第一篇笔记开始'}
-          </h3>
+          <h3>{notes.length ? '这门课程还没有笔记' : '从第一篇笔记开始'}</h3>
           <p>保存笔记后会出现节点，添加关联后会出现连线。</p>
-          <button
-            onClick={
-              notes.length
-                ? () => {
-                    setCourse('all');
-                    setTag('');
-                  }
-                : onNew
-            }
-          >
+          <button onClick={notes.length ? () => setCourse('all') : onNew}>
             {notes.length ? '查看全部课程' : '新建笔记'}
           </button>
         </div>
@@ -547,47 +513,25 @@ export default function KnowledgeNetwork({
                     );
                     return (
                       n && (
-                        <div key={e.id}>
-                          <button
-                            className="network-related-row"
-                            onClick={() => choose(n.id, true)}
-                          >
-                            {n.title}
-                            <small>
-                              {active.relatedIds?.includes(n.id)
-                                ? `本篇 → 该笔记：${active.relatedLabels?.[n.id] || '已关联'}`
-                                : `该笔记 → 本篇：${n.relatedLabels?.[active.id] || '已关联'}`}
-                            </small>
-                            {active.relatedIds?.includes(n.id) &&
-                              n.relatedIds?.includes(active.id) && (
-                                <small>
-                                  该笔记 → 本篇：
-                                  {n.relatedLabels?.[active.id] || '已关联'}
-                                </small>
-                              )}
-                          </button>
-                          <button
-                            className="danger"
-                            aria-label={`移除与 ${n.title} 的关联`}
-                            onClick={() => {
-                              for (const [from, to] of [
-                                [active, n],
-                                [n, active],
-                              ]) {
-                                const labels = { ...from.relatedLabels };
-                                delete labels[to.id];
-                                onChange(from.id, {
-                                  relatedIds: from.relatedIds?.filter(
-                                    (id) => id !== to.id,
-                                  ),
-                                  relatedLabels: labels,
-                                });
-                              }
-                            }}
-                          >
-                            移除关联
-                          </button>
-                        </div>
+                        <button
+                          className="network-related-row"
+                          key={e.id}
+                          onClick={() => choose(n.id, true)}
+                        >
+                          {n.title}
+                          <small>
+                            {active.relatedIds?.includes(n.id)
+                              ? `本篇 → 该笔记：${active.relatedLabels?.[n.id] || '已关联'}`
+                              : `该笔记 → 本篇：${n.relatedLabels?.[active.id] || '已关联'}`}
+                          </small>
+                          {active.relatedIds?.includes(n.id) &&
+                            n.relatedIds?.includes(active.id) && (
+                              <small>
+                                该笔记 → 本篇：
+                                {n.relatedLabels?.[active.id] || '已关联'}
+                              </small>
+                            )}
+                        </button>
                       )
                     );
                   })}

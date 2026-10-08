@@ -1,0 +1,429 @@
+{
+  "evaluatedAt": "2026-10-02T17:22:33.532Z",
+  "scope": "原创短讲义，公开回归 6 题 + 另外 4 题；非独立盲测。引用编号/金标准小节命中为自动指标，答案准确性和引用是否支持对应断言需人工复核。",
+  "live": false,
+  "regression": [
+    {
+      "query": "矩阵乘法",
+      "expected": "矩阵乘法",
+      "kind": "直接术语",
+      "baseline": "矩阵乘法",
+      "enhanced": "矩阵乘法"
+    },
+    {
+      "query": "先做一个变换再做另一个",
+      "expected": "矩阵乘法",
+      "kind": "词表覆盖的口语问法",
+      "baseline": "矩阵乘法",
+      "enhanced": "矩阵乘法"
+    },
+    {
+      "query": "独立信息有多少",
+      "expected": "矩阵的秩",
+      "kind": "词表覆盖的口语问法",
+      "baseline": "矩阵的秩",
+      "enhanced": "矩阵的秩"
+    },
+    {
+      "query": "只伸缩不转向",
+      "expected": "特征向量",
+      "kind": "词表覆盖的口语问法",
+      "baseline": "特征向量",
+      "enhanced": "特征向量"
+    },
+    {
+      "query": "方程有没有解",
+      "expected": "线性方程组",
+      "kind": "词表覆盖的口语问法",
+      "baseline": "线性方程组",
+      "enhanced": "线性方程组"
+    },
+    {
+      "query": "特征值可以为零吗",
+      "expected": "特征值",
+      "kind": "直接术语",
+      "baseline": "特征值",
+      "enhanced": "特征值"
+    }
+  ],
+  "results": [
+    {
+      "id": "order",
+      "query": "列向量先经过 B，再经过 A，对应的总矩阵应怎样写？",
+      "expected": [
+        "矩阵乘法"
+      ],
+      "answer": "AB；先求 Bx，再算 A(Bx)，顺序不可任意交换。",
+      "variants": [
+        {
+          "variant": "baseline",
+          "top1Hit": true,
+          "recall": true,
+          "answer": null,
+          "answerCorrect": null,
+          "citationSupportCorrect": null,
+          "citationIdsValid": null,
+          "expectedSectionCited": null,
+          "retrieved": [
+            {
+              "id": "S1",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵乘法",
+              "quote": "矩阵乘法表示线性变换的复合。对列向量 x，ABx 表示先施加 B，再施加 A。一般 AB 不等于 BA。若 A 是 m×n 矩阵，B 是 n×p 矩阵，则 AB 是 m×p 矩阵。例如 A=[[1,1],[0,1]]，B=[[1,0],[1,1]]，AB=[[2,1],[1,1]]，BA=[[1,1],[1,2]]。"
+            },
+            {
+              "id": "S2",
+              "name": "演示讲义·线性代数.txt",
+              "section": "单位矩阵",
+              "quote": "单位矩阵 I 的主对角线元素为1，其他元素为0。在维度适配时 AI=IA=A。单位矩阵对应保持每个向量不变的线性变换。"
+            },
+            {
+              "id": "S3",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征向量",
+              "quote": "特征向量是满足 Av=λv 的非零向量 v，λ 是相应的特征值。沿该方向，线性变换只按比例伸缩；λ 为负时方向反转。零向量不能作为特征向量。A=diag(2,3) 的向量 (1,0) 是对应特征值2的特征向量。"
+            },
+            {
+              "id": "S4",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征值",
+              "quote": "特征值 λ 是满足 det(A-λI)=0 的数。零可以是特征值；若 Av=0 且 v非零，则 v是对应零特征值的特征向量，变换后成为零向量，不应说零向量仍有方向。"
+            },
+            {
+              "id": "S5",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵的秩",
+              "quote": "矩阵的秩是其列空间的维数，也等于最大线性无关列组所含列的个数。A=[[1,2],[2,4]] 的第二列是第一列的2倍，秩为1。秩说明输出所能覆盖的独立方向数。"
+            },
+            {
+              "id": "S6",
+              "name": "演示讲义·线性代数.txt",
+              "section": "线性方程组",
+              "quote": "线性方程组 Ax=b 有解当且仅当 rank(A)=rank([A|b])。若有解且秩等于未知数个数 n，则解唯一；若秩小于 n，则有无穷多解。系数矩阵秩和增广矩阵秩不相等时无解。"
+            }
+          ],
+          "cited": []
+        },
+        {
+          "variant": "enhanced",
+          "top1Hit": true,
+          "recall": true,
+          "answer": null,
+          "answerCorrect": null,
+          "citationSupportCorrect": null,
+          "citationIdsValid": null,
+          "expectedSectionCited": null,
+          "retrieved": [
+            {
+              "id": "S1",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵乘法",
+              "quote": "矩阵乘法表示线性变换的复合。对列向量 x，ABx 表示先施加 B，再施加 A。一般 AB 不等于 BA。若 A 是 m×n 矩阵，B 是 n×p 矩阵，则 AB 是 m×p 矩阵。例如 A=[[1,1],[0,1]]，B=[[1,0],[1,1]]，AB=[[2,1],[1,1]]，BA=[[1,1],[1,2]]。"
+            },
+            {
+              "id": "S2",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征向量",
+              "quote": "特征向量是满足 Av=λv 的非零向量 v，λ 是相应的特征值。沿该方向，线性变换只按比例伸缩；λ 为负时方向反转。零向量不能作为特征向量。A=diag(2,3) 的向量 (1,0) 是对应特征值2的特征向量。"
+            },
+            {
+              "id": "S3",
+              "name": "演示讲义·线性代数.txt",
+              "section": "单位矩阵",
+              "quote": "单位矩阵 I 的主对角线元素为1，其他元素为0。在维度适配时 AI=IA=A。单位矩阵对应保持每个向量不变的线性变换。"
+            },
+            {
+              "id": "S4",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征值",
+              "quote": "特征值 λ 是满足 det(A-λI)=0 的数。零可以是特征值；若 Av=0 且 v非零，则 v是对应零特征值的特征向量，变换后成为零向量，不应说零向量仍有方向。"
+            },
+            {
+              "id": "S5",
+              "name": "演示讲义·线性代数.txt",
+              "section": "线性方程组",
+              "quote": "线性方程组 Ax=b 有解当且仅当 rank(A)=rank([A|b])。若有解且秩等于未知数个数 n，则解唯一；若秩小于 n，则有无穷多解。系数矩阵秩和增广矩阵秩不相等时无解。"
+            },
+            {
+              "id": "S6",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵的秩",
+              "quote": "矩阵的秩是其列空间的维数，也等于最大线性无关列组所含列的个数。A=[[1,2],[2,4]] 的第二列是第一列的2倍，秩为1。秩说明输出所能覆盖的独立方向数。"
+            }
+          ],
+          "cited": []
+        }
+      ]
+    },
+    {
+      "id": "rank",
+      "query": "一个矩阵的所有列里面，最多能挑出多少个线性无关的列，这个数叫什么？",
+      "expected": [
+        "矩阵的秩"
+      ],
+      "answer": "矩阵的秩，等于列空间维数或最大线性无关列组的列数。",
+      "variants": [
+        {
+          "variant": "baseline",
+          "top1Hit": true,
+          "recall": true,
+          "answer": null,
+          "answerCorrect": null,
+          "citationSupportCorrect": null,
+          "citationIdsValid": null,
+          "expectedSectionCited": null,
+          "retrieved": [
+            {
+              "id": "S1",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵的秩",
+              "quote": "矩阵的秩是其列空间的维数，也等于最大线性无关列组所含列的个数。A=[[1,2],[2,4]] 的第二列是第一列的2倍，秩为1。秩说明输出所能覆盖的独立方向数。"
+            },
+            {
+              "id": "S2",
+              "name": "演示讲义·线性代数.txt",
+              "section": "线性方程组",
+              "quote": "线性方程组 Ax=b 有解当且仅当 rank(A)=rank([A|b])。若有解且秩等于未知数个数 n，则解唯一；若秩小于 n，则有无穷多解。系数矩阵秩和增广矩阵秩不相等时无解。"
+            },
+            {
+              "id": "S3",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵乘法",
+              "quote": "矩阵乘法表示线性变换的复合。对列向量 x，ABx 表示先施加 B，再施加 A。一般 AB 不等于 BA。若 A 是 m×n 矩阵，B 是 n×p 矩阵，则 AB 是 m×p 矩阵。例如 A=[[1,1],[0,1]]，B=[[1,0],[1,1]]，AB=[[2,1],[1,1]]，BA=[[1,1],[1,2]]。"
+            },
+            {
+              "id": "S4",
+              "name": "演示讲义·线性代数.txt",
+              "section": "单位矩阵",
+              "quote": "单位矩阵 I 的主对角线元素为1，其他元素为0。在维度适配时 AI=IA=A。单位矩阵对应保持每个向量不变的线性变换。"
+            },
+            {
+              "id": "S5",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征向量",
+              "quote": "特征向量是满足 Av=λv 的非零向量 v，λ 是相应的特征值。沿该方向，线性变换只按比例伸缩；λ 为负时方向反转。零向量不能作为特征向量。A=diag(2,3) 的向量 (1,0) 是对应特征值2的特征向量。"
+            },
+            {
+              "id": "S6",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征值",
+              "quote": "特征值 λ 是满足 det(A-λI)=0 的数。零可以是特征值；若 Av=0 且 v非零，则 v是对应零特征值的特征向量，变换后成为零向量，不应说零向量仍有方向。"
+            }
+          ],
+          "cited": []
+        },
+        {
+          "variant": "enhanced",
+          "top1Hit": true,
+          "recall": true,
+          "answer": null,
+          "answerCorrect": null,
+          "citationSupportCorrect": null,
+          "citationIdsValid": null,
+          "expectedSectionCited": null,
+          "retrieved": [
+            {
+              "id": "S1",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵的秩",
+              "quote": "矩阵的秩是其列空间的维数，也等于最大线性无关列组所含列的个数。A=[[1,2],[2,4]] 的第二列是第一列的2倍，秩为1。秩说明输出所能覆盖的独立方向数。"
+            },
+            {
+              "id": "S2",
+              "name": "演示讲义·线性代数.txt",
+              "section": "线性方程组",
+              "quote": "线性方程组 Ax=b 有解当且仅当 rank(A)=rank([A|b])。若有解且秩等于未知数个数 n，则解唯一；若秩小于 n，则有无穷多解。系数矩阵秩和增广矩阵秩不相等时无解。"
+            },
+            {
+              "id": "S3",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵乘法",
+              "quote": "矩阵乘法表示线性变换的复合。对列向量 x，ABx 表示先施加 B，再施加 A。一般 AB 不等于 BA。若 A 是 m×n 矩阵，B 是 n×p 矩阵，则 AB 是 m×p 矩阵。例如 A=[[1,1],[0,1]]，B=[[1,0],[1,1]]，AB=[[2,1],[1,1]]，BA=[[1,1],[1,2]]。"
+            },
+            {
+              "id": "S4",
+              "name": "演示讲义·线性代数.txt",
+              "section": "单位矩阵",
+              "quote": "单位矩阵 I 的主对角线元素为1，其他元素为0。在维度适配时 AI=IA=A。单位矩阵对应保持每个向量不变的线性变换。"
+            },
+            {
+              "id": "S5",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征向量",
+              "quote": "特征向量是满足 Av=λv 的非零向量 v，λ 是相应的特征值。沿该方向，线性变换只按比例伸缩；λ 为负时方向反转。零向量不能作为特征向量。A=diag(2,3) 的向量 (1,0) 是对应特征值2的特征向量。"
+            }
+          ],
+          "cited": []
+        }
+      ]
+    },
+    {
+      "id": "zero",
+      "query": "若非零向量 v 满足 Av=0，它能叫特征向量吗？对应的特征值是多少？",
+      "expected": [
+        "特征值"
+      ],
+      "answer": "可以，v 是对应特征值 0 的特征向量；v 本身必须非零。",
+      "variants": [
+        {
+          "variant": "baseline",
+          "top1Hit": false,
+          "recall": true,
+          "answer": null,
+          "answerCorrect": null,
+          "citationSupportCorrect": null,
+          "citationIdsValid": null,
+          "expectedSectionCited": null,
+          "retrieved": [
+            {
+              "id": "S1",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征向量",
+              "quote": "特征向量是满足 Av=λv 的非零向量 v，λ 是相应的特征值。沿该方向，线性变换只按比例伸缩；λ 为负时方向反转。零向量不能作为特征向量。A=diag(2,3) 的向量 (1,0) 是对应特征值2的特征向量。"
+            },
+            {
+              "id": "S2",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征值",
+              "quote": "特征值 λ 是满足 det(A-λI)=0 的数。零可以是特征值；若 Av=0 且 v非零，则 v是对应零特征值的特征向量，变换后成为零向量，不应说零向量仍有方向。"
+            },
+            {
+              "id": "S3",
+              "name": "演示讲义·线性代数.txt",
+              "section": "单位矩阵",
+              "quote": "单位矩阵 I 的主对角线元素为1，其他元素为0。在维度适配时 AI=IA=A。单位矩阵对应保持每个向量不变的线性变换。"
+            },
+            {
+              "id": "S4",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵乘法",
+              "quote": "矩阵乘法表示线性变换的复合。对列向量 x，ABx 表示先施加 B，再施加 A。一般 AB 不等于 BA。若 A 是 m×n 矩阵，B 是 n×p 矩阵，则 AB 是 m×p 矩阵。例如 A=[[1,1],[0,1]]，B=[[1,0],[1,1]]，AB=[[2,1],[1,1]]，BA=[[1,1],[1,2]]。"
+            }
+          ],
+          "cited": []
+        },
+        {
+          "variant": "enhanced",
+          "top1Hit": false,
+          "recall": true,
+          "answer": null,
+          "answerCorrect": null,
+          "citationSupportCorrect": null,
+          "citationIdsValid": null,
+          "expectedSectionCited": null,
+          "retrieved": [
+            {
+              "id": "S1",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征向量",
+              "quote": "特征向量是满足 Av=λv 的非零向量 v，λ 是相应的特征值。沿该方向，线性变换只按比例伸缩；λ 为负时方向反转。零向量不能作为特征向量。A=diag(2,3) 的向量 (1,0) 是对应特征值2的特征向量。"
+            },
+            {
+              "id": "S2",
+              "name": "演示讲义·线性代数.txt",
+              "section": "特征值",
+              "quote": "特征值 λ 是满足 det(A-λI)=0 的数。零可以是特征值；若 Av=0 且 v非零，则 v是对应零特征值的特征向量，变换后成为零向量，不应说零向量仍有方向。"
+            },
+            {
+              "id": "S3",
+              "name": "演示讲义·线性代数.txt",
+              "section": "单位矩阵",
+              "quote": "单位矩阵 I 的主对角线元素为1，其他元素为0。在维度适配时 AI=IA=A。单位矩阵对应保持每个向量不变的线性变换。"
+            },
+            {
+              "id": "S4",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵乘法",
+              "quote": "矩阵乘法表示线性变换的复合。对列向量 x，ABx 表示先施加 B，再施加 A。一般 AB 不等于 BA。若 A 是 m×n 矩阵，B 是 n×p 矩阵，则 AB 是 m×p 矩阵。例如 A=[[1,1],[0,1]]，B=[[1,0],[1,1]]，AB=[[2,1],[1,1]]，BA=[[1,1],[1,2]]。"
+            }
+          ],
+          "cited": []
+        }
+      ]
+    },
+    {
+      "id": "solution",
+      "query": "当系数矩阵与增广矩阵的秩不同，方程组还有解吗？",
+      "expected": [
+        "线性方程组"
+      ],
+      "answer": "无解；Ax=b 有解当且仅当两个秩相等。",
+      "variants": [
+        {
+          "variant": "baseline",
+          "top1Hit": true,
+          "recall": true,
+          "answer": null,
+          "answerCorrect": null,
+          "citationSupportCorrect": null,
+          "citationIdsValid": null,
+          "expectedSectionCited": null,
+          "retrieved": [
+            {
+              "id": "S1",
+              "name": "演示讲义·线性代数.txt",
+              "section": "线性方程组",
+              "quote": "线性方程组 Ax=b 有解当且仅当 rank(A)=rank([A|b])。若有解且秩等于未知数个数 n，则解唯一；若秩小于 n，则有无穷多解。系数矩阵秩和增广矩阵秩不相等时无解。"
+            },
+            {
+              "id": "S2",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵的秩",
+              "quote": "矩阵的秩是其列空间的维数，也等于最大线性无关列组所含列的个数。A=[[1,2],[2,4]] 的第二列是第一列的2倍，秩为1。秩说明输出所能覆盖的独立方向数。"
+            },
+            {
+              "id": "S3",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵乘法",
+              "quote": "矩阵乘法表示线性变换的复合。对列向量 x，ABx 表示先施加 B，再施加 A。一般 AB 不等于 BA。若 A 是 m×n 矩阵，B 是 n×p 矩阵，则 AB 是 m×p 矩阵。例如 A=[[1,1],[0,1]]，B=[[1,0],[1,1]]，AB=[[2,1],[1,1]]，BA=[[1,1],[1,2]]。"
+            },
+            {
+              "id": "S4",
+              "name": "演示讲义·线性代数.txt",
+              "section": "单位矩阵",
+              "quote": "单位矩阵 I 的主对角线元素为1，其他元素为0。在维度适配时 AI=IA=A。单位矩阵对应保持每个向量不变的线性变换。"
+            }
+          ],
+          "cited": []
+        },
+        {
+          "variant": "enhanced",
+          "top1Hit": true,
+          "recall": true,
+          "answer": null,
+          "answerCorrect": null,
+          "citationSupportCorrect": null,
+          "citationIdsValid": null,
+          "expectedSectionCited": null,
+          "retrieved": [
+            {
+              "id": "S1",
+              "name": "演示讲义·线性代数.txt",
+              "section": "线性方程组",
+              "quote": "线性方程组 Ax=b 有解当且仅当 rank(A)=rank([A|b])。若有解且秩等于未知数个数 n，则解唯一；若秩小于 n，则有无穷多解。系数矩阵秩和增广矩阵秩不相等时无解。"
+            },
+            {
+              "id": "S2",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵的秩",
+              "quote": "矩阵的秩是其列空间的维数，也等于最大线性无关列组所含列的个数。A=[[1,2],[2,4]] 的第二列是第一列的2倍，秩为1。秩说明输出所能覆盖的独立方向数。"
+            },
+            {
+              "id": "S3",
+              "name": "演示讲义·线性代数.txt",
+              "section": "矩阵乘法",
+              "quote": "矩阵乘法表示线性变换的复合。对列向量 x，ABx 表示先施加 B，再施加 A。一般 AB 不等于 BA。若 A 是 m×n 矩阵，B 是 n×p 矩阵，则 AB 是 m×p 矩阵。例如 A=[[1,1],[0,1]]，B=[[1,0],[1,1]]，AB=[[2,1],[1,1]]，BA=[[1,1],[1,2]]。"
+            },
+            {
+              "id": "S4",
+              "name": "演示讲义·线性代数.txt",
+              "section": "单位矩阵",
+              "quote": "单位矩阵 I 的主对角线元素为1，其他元素为0。在维度适配时 AI=IA=A。单位矩阵对应保持每个向量不变的线性变换。"
+            }
+          ],
+          "cited": []
+        }
+      ]
+    }
+  ]
+}

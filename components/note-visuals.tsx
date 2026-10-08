@@ -24,6 +24,7 @@ import {
   type NodePosition,
 } from '@/lib/note-graph';
 import type { Note } from '@/lib/knowledge';
+import NoteReader from '@/components/note-reader';
 
 type GraphData = { nodes: ConceptNode[]; edges: ConceptEdge[] };
 type Props = {
@@ -253,7 +254,6 @@ export default function NoteVisuals({
     [edgeTo, setEdgeTo] = useState(''),
     [edgeLabel, setEdgeLabel] = useState('相关');
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [nodeQuery, setNodeQuery] = useState('');
   useEffect(() => {
     if (expanded) dialogRef.current?.showModal();
     else dialogRef.current?.close();
@@ -714,7 +714,7 @@ export default function NoteVisuals({
         {(
           [
             { id: 'text', name: '正文' },
-            { id: 'related', name: '关联笔记' },
+            { id: 'related', name: '关联图谱' },
             { id: 'concept', name: '篇内概念图' },
           ] as const
         ).map((item) => (
@@ -736,7 +736,12 @@ export default function NoteVisuals({
         aria-labelledby={`note-tab-${note.id}-${tab}`}
       >
         {tab === 'text' ? (
-          renderText(note.text)
+          <NoteReader
+            note={note}
+            notes={notes}
+            onOpen={onOpen}
+            onShowGraph={() => switchTab('related')}
+          />
         ) : (
           <>
             <div className="graph-heading">
@@ -793,42 +798,6 @@ export default function NoteVisuals({
               <p className="notice">
                 正文或标题已修改，当前图谱可能过期。你可以保留它，或点击重新生成。
               </p>
-            )}
-            {graph.nodes.length > 0 && (
-              <div className="form-stack">
-                <input
-                  aria-label="搜索概念或关联笔记"
-                  placeholder="搜索概念名称或解释"
-                  value={nodeQuery}
-                  onChange={(e) => setNodeQuery(e.target.value)}
-                />
-                {nodeQuery.trim() && (
-                  <div className="actions">
-                    {graph.nodes
-                      .filter((node) =>
-                        `${node.label} ${node.description ?? ''}`
-                          .toLocaleLowerCase()
-                          .includes(nodeQuery.trim().toLocaleLowerCase()),
-                      )
-                      .map((node) => (
-                        <button
-                          key={node.id}
-                          onClick={() => {
-                            setSelected(node.id);
-                            setInspectorOpen(true);
-                          }}
-                        >
-                          {node.label}
-                        </button>
-                      ))}
-                    {!graph.nodes.some((node) =>
-                      `${node.label} ${node.description ?? ''}`
-                        .toLocaleLowerCase()
-                        .includes(nodeQuery.trim().toLocaleLowerCase()),
-                    ) && <p className="muted">没有匹配的概念。</p>}
-                  </div>
-                )}
-              </div>
             )}
             {confirmReplace && (
               <div className="graph-confirm">
