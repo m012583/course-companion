@@ -66,7 +66,10 @@ export function parseCheck(
       sourceIds: [...new Set(q.sourceIds)],
     } as CheckQuestion;
   });
-  if (new Set(questions.map((q) => q.term)).size !== 2)
+  if (
+    new Set(questions.map((q) => q.term)).size !==
+    Math.min(2, new Set(terms).size)
+  )
     throw new Error('两道题需要覆盖不同知识点。');
   return questions;
 }

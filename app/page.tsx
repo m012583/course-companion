@@ -1,33 +1,40 @@
 'use client';
+import type {
+  Message,
+  Session,
+  Course,
+  ViewId,
+  Preferences,
+  ApiData,
+  Workspace,
+} from '@/lib/workspace-types';
 import { locateSource } from '@/lib/source-anchor';
-import MaterialCorrection from '@/components/material-correction';
-import { readNoteDraft, type NoteDraft } from '@/lib/note-draft';
+import MaterialReader from '@/components/material-reader';
+import LearningFlow from '@/components/learning-flow';
+import LearningNext from '@/components/learning-next';
+import { readNoteDraft } from '@/lib/note-draft';
 import ReactMarkdown from 'react-markdown';
 import Image from 'next/image';
 import NoteVisuals from '@/components/note-visuals';
 import KnowledgeNetwork from '@/components/knowledge-network';
 import QuickSearch from '@/components/quick-search';
 import ReviewPlanner from '@/components/review-planner';
-import StudyLab, { type StudyLabState } from '@/components/study-lab';
+import StudyLab from '@/components/study-lab';
 import BackupPanel from '@/components/backup-panel';
 import { demoWorkspace } from '@/lib/demo-course';
 import { readEventStream } from '@/lib/event-stream';
 import { cleanCitations } from '@/lib/retrieval';
 import '@/components/study-lab.css';
+import '@/components/learning-flow.css';
 import CourseRecycleBin, {
   type CourseTrashItem,
 } from '@/components/course-recycle-bin';
-import {
-  removeChapter,
-  restoreChapter,
-  type ChapterTrash,
-} from '@/lib/course-trash';
+import { removeChapter, restoreChapter } from '@/lib/course-trash';
 import type { ChatImage } from '@/lib/chat-images';
 import {
   makeLearningContext,
   saveLessonToGuide,
   type ChapterLesson,
-  type LearningContext,
 } from '@/lib/chapter-lesson';
 import type { publicAiSettings } from '@/lib/ai-provider';
 import CourseGuidePanel, { CourseGuideEditor } from '@/components/course-guide';
@@ -60,7 +67,6 @@ import {
   LoaderCircle,
   Menu,
   Plus,
-  RefreshCw,
   Save,
   Search,
   Send,
@@ -85,88 +91,12 @@ import {
   localDate,
   scheduleReview,
   splitPassages,
-  passageText,
   type Coverage,
   type Evidence,
   type Material,
   type Note,
   type Passage,
 } from '@/lib/knowledge';
-type Message = {
-  role: 'user' | 'assistant';
-  text: string;
-  sources?: string[];
-  evidence?: Evidence[];
-  retrieved?: Evidence[];
-  saved?: boolean;
-  images?: ChatImage[];
-  deletedAt?: string;
-  scope?: {
-    selected: number;
-    matchedFiles: number;
-    passages: number;
-    imageCount?: number;
-    lessonTitle?: string;
-    retrieval?: string;
-    truncated?: boolean;
-  };
-};
-type Session = {
-  id: string;
-  title: string;
-  messages: Message[];
-  updatedAt: string;
-  deletedAt?: string;
-  learningContext?: LearningContext;
-};
-type Course = {
-  studyLab?: StudyLabState;
-  id: string;
-  name: string;
-  code: string;
-  materials: Material[];
-  graphFocus: string;
-  sessions: Session[];
-  teacher?: string;
-  semester?: string;
-  examDate?: string;
-  chapters?: string[];
-  guide?: CourseGuide;
-  removedChapters?: ChapterTrash[];
-  removedGuides?: { id: string; guide: CourseGuide }[];
-  deletedAt?: string;
-};
-type ViewId =
-  | 'home'
-  | 'course'
-  | 'lab'
-  | 'materials'
-  | 'study'
-  | 'knowledge'
-  | 'graph'
-  | 'review';
-type Preferences = { brandName: string; userName: string; semester: string };
-type ApiData = {
-  state?: Workspace;
-  revision?: number;
-  error?: string;
-  id?: string;
-  answer?: string;
-  evidence?: Evidence[];
-  retrieved?: Evidence[];
-  scope?: Message['scope'];
-};
-type Workspace = {
-  noteDraft?: NoteDraft;
-  courses: Course[];
-  notes: Note[];
-  courseId?: string;
-  sessionId?: string;
-  activeView?: ViewId;
-  preferences?: Preferences;
-  model?: string;
-  reviewPlans?: ReviewPlan[];
-};
 const DEFAULT_PREFERENCES: Preferences = {
   brandName: '课伴',
   userName: '同学',
@@ -183,10 +113,10 @@ const EMPTY_COURSE: Course = {
   sessions: [],
 };
 const tabs: Array<{ id: ViewId; name: string }> = [
-  { id: 'course', name: '课程导览' },
-  { id: 'lab', name: '教材与自测' },
-  { id: 'study', name: '问答' },
-  { id: 'materials', name: '资料' },
+  { id: 'course', name: '学习概览' },
+  { id: 'materials', name: '教材阅读' },
+  { id: 'study', name: 'AI 问答' },
+  { id: 'lab', name: '练习与错题' },
 ];
 const shortTitle = (text: string) =>
   text
@@ -376,6 +306,22 @@ export default function Home() {
   const [activeCourseId, setActiveCourseId] = useState('demo-linear'),
     [activeSessionId, setActiveSessionId] = useState('');
   const [activeView, setActiveView] = useState<ViewId>('home');
+  const [labTool, setLabTool] = useState<'calibration' | 'benchmark' | null>(
+    null,
+  );
+  const [practiceQuestion, setPracticeQuestion] = useState('');
+  const [readingChat, setReadingChat] = useState(false);
+  const [readingTab, setReadingTab] = useState<'read' | 'chat'>('read');
+  const [welcome, setWelcome] = useState(false);
+  useEffect(() => {
+    try {
+      const show = localStorage.getItem('course-kb-welcome-04') !== 'dismissed';
+      queueMicrotask(() => setWelcome(show));
+    } catch {
+      /* optional preference */
+    }
+  }, []);
+
   const [guideChapterId, setGuideChapterId] = useState('');
   const [preferences, setPreferences] = useState(DEMO_WORKSPACE.preferences),
     [model, setModel] = useState('deepseek-v4-flash');
@@ -464,6 +410,11 @@ export default function Home() {
   );
   const currentMaterial =
     materials.find((m) => materialKey(m) === selectedMaterialId) ??
+    materials.find((m) =>
+      activeCourse.reading?.fileId
+        ? m.fileId === activeCourse.reading.fileId
+        : m.name === activeCourse.reading?.name,
+    ) ??
     materials[0];
   const allMaterials = courses.flatMap((c) =>
     c.materials.map((m) => ({ ...m, courseName: c.name })),
@@ -772,6 +723,7 @@ export default function Home() {
         setSelectedMaterialId(p.get('file') ?? '');
         setSelectedNoteId(p.get('note') ?? '');
         setGuideChapterId(p.get('chapter') ?? '');
+        setPracticeQuestion(p.get('question') ?? '');
         if (view === 'knowledge') {
           setNoteCollection(
             p.get('collection') === 'trash'
@@ -834,14 +786,17 @@ export default function Home() {
       filter?: string;
       collection?: 'all' | 'starred' | 'trash';
       chapter?: string;
+      question?: string;
     } = {},
   ) {
     setActiveView(view);
+    setPracticeQuestion(opts.question ?? '');
     setMobileNavOpen(false);
     setEditingNote(false);
     if (view === 'course') setGuideChapterId(opts.chapter ?? '');
     if (opts.course) {
       if (opts.course !== activeCourseId) {
+        setReadingChat(false);
         setQuestionImages([]);
       }
       setActiveCourseId(opts.course);
@@ -869,6 +824,7 @@ export default function Home() {
     if (opts.file) params.set('file', opts.file);
     if (opts.note) params.set('note', opts.note);
     if (opts.chapter) params.set('chapter', opts.chapter);
+    if (opts.question) params.set('question', opts.question);
     if (opts.filter) params.set('filter', opts.filter);
     if (opts.collection && opts.collection !== 'all')
       params.set('collection', opts.collection);
@@ -2005,6 +1961,16 @@ export default function Home() {
           </span>
           <span className="home-overview-tip">按自己的节奏，一步一步来</span>
         </div>
+        <LearningNext
+          courses={courses}
+          onRead={(c) =>
+            go('materials', {
+              course: c.id,
+              file: c.reading?.fileId ?? c.reading?.name,
+            })
+          }
+          onPractice={(c, question) => go('lab', { course: c.id, question })}
+        />
         <section className="study-focus">
           <div className="resume">
             <span className="eyebrow">
@@ -2060,7 +2026,7 @@ export default function Home() {
           </div>
         </section>
         <div className="section-heading">
-          <h2>我的课程</h2>
+          <h2 id="my-courses">我的课程</h2>
           <button
             className="text-button"
             onClick={() => setNewCourseOpen(true)}
@@ -2249,6 +2215,16 @@ export default function Home() {
   function courseView() {
     return (
       <div className="course-overview-page">
+        <LearningNext
+          courses={[activeCourse]}
+          onRead={(c) =>
+            go('materials', {
+              course: c.id,
+              file: c.reading?.fileId ?? c.reading?.name,
+            })
+          }
+          onPractice={(c, question) => go('lab', { course: c.id, question })}
+        />
         <CourseGuidePanel
           key={activeCourse.id}
           courseName={activeCourse.name}
@@ -2437,72 +2413,136 @@ export default function Home() {
       </div>
     );
   }
+  function labTools(mode: 'calibration' | 'benchmark') {
+    return (
+      <StudyLab
+        key={`${activeCourse.id}-${mode}`}
+        mode={mode}
+        course={activeCourse}
+        model={model}
+        disabled={!!syncError || syncStatus === 'offline'}
+        onChange={(studyLab) =>
+          updateCourse(activeCourse.id, (c) => ({ ...c, studyLab }))
+        }
+        onSource={setSource}
+        onChapter={(chapter) =>
+          go('course', { course: activeCourse.id, chapter })
+        }
+        onAsk={askFromGuide}
+        onAddChapter={(chapter) =>
+          updateCourse(activeCourse.id, (c) =>
+            c.guide &&
+            c.guide.chapters.length < 16 &&
+            !c.guide.chapters.some((ch) => ch.title === chapter.title)
+              ? {
+                  ...c,
+                  guide: {
+                    ...c.guide,
+                    updatedAt: new Date().toISOString(),
+                    chapters: [...c.guide.chapters, chapter],
+                  },
+                }
+              : c,
+          )
+        }
+        onPracticePlan={(plan, studyLab) => {
+          setReviewPlans((current) =>
+            current.some((p) => p.id === plan.id)
+              ? current
+              : [...current, plan],
+          );
+          setCourses((current) =>
+            current.map((c) =>
+              c.id === activeCourse.id ? { ...c, studyLab } : c,
+            ),
+          );
+          setToast('已加入复习计划，可修改日期与任务。');
+        }}
+        onPlan={(plan, check) => {
+          setReviewPlans((current) =>
+            current.some((p) => p.id === plan.id)
+              ? current
+              : [...current, plan],
+          );
+          updateCourse(activeCourse.id, (c) => ({
+            ...c,
+            studyLab: {
+              ...c.studyLab,
+              checks: c.studyLab?.checks?.map((item) =>
+                item.id === check.id ? { ...item, planId: plan.id } : item,
+              ),
+            },
+          }));
+          setToast('自测后的复习安排已保存。');
+        }}
+      />
+    );
+  }
   function materialsView() {
     const visible = materials.filter(
       (m) =>
         (!materialChapter || m.chapter === materialChapter) &&
         m.name.toLowerCase().includes(materialQuery.toLowerCase()),
     );
-    const text = currentMaterial?.passages?.length
-      ? passageText(currentMaterial.passages)
-      : (currentMaterial?.content ?? '');
     return (
       <>
-        <div className="toolbar">
-          <div className="search">
-            <Search size={17} />
-            <input
-              aria-label="搜索资料"
-              placeholder="搜索资料名称"
-              value={materialQuery}
-              onChange={(e) => setMaterialQuery(e.target.value)}
-            />
+        <details className="material-library panel" open={!currentMaterial}>
+          <summary>选择或上传教材 · {materials.length} 份</summary>
+          <div className="toolbar">
+            <div className="search">
+              <Search size={17} />
+              <input
+                aria-label="搜索资料"
+                placeholder="搜索资料名称"
+                value={materialQuery}
+                onChange={(e) => setMaterialQuery(e.target.value)}
+              />
+            </div>
+            <select
+              aria-label="资料章节"
+              value={materialChapter}
+              onChange={(e) => setMaterialChapter(e.target.value)}
+            >
+              <option value="">全部章节</option>
+              {[
+                ...new Set([
+                  ...activeChapters,
+                  ...materials.map((m) => m.chapter).filter(Boolean),
+                ]),
+              ].map((c) => (
+                <option key={c}>{c}</option>
+              ))}
+            </select>
+            <label
+              className={`button primary upload ${uploadProgress ? 'disabled' : ''}`}
+            >
+              <Upload size={17} />
+              上传资料
+              <input
+                disabled={!!uploadProgress}
+                type="file"
+                multiple
+                accept=".pdf,.docx,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp"
+                onChange={addMaterials}
+              />
+            </label>
           </div>
-          <select
-            aria-label="资料章节"
-            value={materialChapter}
-            onChange={(e) => setMaterialChapter(e.target.value)}
-          >
-            <option value="">全部章节</option>
-            {[
-              ...new Set([
-                ...activeChapters,
-                ...materials.map((m) => m.chapter).filter(Boolean),
-              ]),
-            ].map((c) => (
-              <option key={c}>{c}</option>
-            ))}
-          </select>
-          <label
-            className={`button primary upload ${uploadProgress ? 'disabled' : ''}`}
-          >
-            <Upload size={17} />
-            上传资料
-            <input
-              disabled={!!uploadProgress}
-              type="file"
-              multiple
-              accept=".pdf,.docx,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp"
-              onChange={addMaterials}
-            />
-          </label>
-        </div>
-        <p className="muted small">
-          支持 PDF、DOCX、TXT、Markdown，每份不超过 20 MB。最多提取 40 万字符或
-          500 页，超出部分会明确标注。
-        </p>
-        {uploadProgress && (
-          <output className="notice">
-            <LoaderCircle size={16} className="spin" />
-            {uploadProgress}
-          </output>
-        )}
-        {uploadError && (
-          <p className="error" role="alert">
-            {uploadError}
+          <p className="muted small">
+            支持 PDF、DOCX、TXT、Markdown，每份不超过 20 MB。最多提取 40
+            万字符或 500 页，超出部分会明确标注。
           </p>
-        )}
-        <div className="materials-layout">
+          {uploadProgress && (
+            <output className="notice">
+              <LoaderCircle size={16} className="spin" />
+              {uploadProgress}
+            </output>
+          )}
+          {uploadError && (
+            <p className="error" role="alert">
+              {uploadError}
+            </p>
+          )}
+
           <section className="panel list-panel">
             <div className="panel-heading">
               <h2>资料</h2>
@@ -2516,6 +2556,22 @@ export default function Home() {
                 <button
                   onClick={() => {
                     setSelectedMaterialId(materialKey(m));
+                    setReadingTab('read');
+                    updateCourse(activeCourse.id, (c) => ({
+                      ...c,
+                      reading: {
+                        fileId: m.fileId,
+                        name: m.name,
+                        passage:
+                          c.reading &&
+                          (c.reading.fileId
+                            ? c.reading.fileId === m.fileId
+                            : c.reading.name === m.name)
+                            ? c.reading.passage
+                            : 0,
+                        updatedAt: new Date().toISOString(),
+                      },
+                    }));
                     history.replaceState(
                       null,
                       '',
@@ -2563,153 +2619,97 @@ export default function Home() {
               </div>
             )}
           </section>
-          <section className="panel material-reader">
-            {currentMaterial ? (
-              <>
-                <div className="panel-heading">
-                  <h2>{currentMaterial.name}</h2>
-                  <div className="actions">
-                    {currentMaterial.fileId && (
-                      <a
-                        className="button"
-                        href={`/api/files?id=${encodeURIComponent(currentMaterial.fileId)}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        打开原文件
-                      </a>
-                    )}
-                    <button
-                      disabled={!currentMaterial.fileId || !!uploadProgress}
-                      onClick={() => void reparse(currentMaterial)}
-                    >
-                      <RefreshCw size={16} />
-                      重新解析
-                    </button>
-                    {currentMaterial.fileId &&
-                      /^(PDF|PNG|JPG|JPEG|WEBP)$/.test(
-                        currentMaterial.type,
-                      ) && (
-                        <button
-                          disabled={!!uploadProgress}
-                          onClick={() =>
-                            void recognizeMaterial(currentMaterial)
-                          }
-                        >
-                          识别扫描文字
-                        </button>
-                      )}
-                    {scanActive && (
-                      <button onClick={() => scanAbort.current?.abort()}>
-                        停止识别
-                      </button>
-                    )}
-                  </div>
-                </div>
-                <div className="reading-meta">
-                  <p className="notice">{coverageLabel(currentMaterial)}</p>
-                  <label>
-                    所属章节
-                    <select
-                      value={currentMaterial.chapter ?? ''}
-                      onChange={(e) =>
-                        updateCourse(activeCourse.id, (c) => ({
-                          ...c,
-                          materials: c.materials.map((m) =>
-                            m === currentMaterial
-                              ? { ...m, chapter: e.target.value }
-                              : m,
+        </details>
+        {currentMaterial ? (
+          <MaterialReader
+            key={materialKey(currentMaterial)}
+            material={currentMaterial}
+            position={activeCourse.reading}
+            chapters={activeChapters}
+            disabled={!!syncError || syncStatus === 'offline'}
+            uploading={!!uploadProgress}
+            scanning={scanActive}
+            onPosition={(reading) =>
+              updateCourse(activeCourse.id, (c) => ({ ...c, reading }))
+            }
+            onAsk={(prompt) => {
+              if (isSending) {
+                setToast('请等待当前回答完成，或先停止生成。');
+                return;
+              }
+              setReadingChat(true);
+              setReadingTab('chat');
+              setActiveSessionId('');
+              setScope('custom');
+              setSelectedFiles([materialKey(currentMaterial)]);
+              setQuestion(prompt);
+            }}
+            onNote={(text, evidence) => {
+              if (draftNote) {
+                setDraftOpen(true);
+                setToast('请先保存或处理已有草稿，再添加选段笔记。');
+                return;
+              }
+              setDiscardDraft(false);
+              setDraftOrigin(null);
+              setDraftOpen(true);
+              setDraftNote({
+                id: crypto.randomUUID(),
+                title: `${currentMaterial.name} · ${evidence.section}`.slice(
+                  0,
+                  100,
+                ),
+                text,
+                course: activeCourse.name,
+                courseId: activeCourse.id,
+                createdAt: localDate(),
+                chapter: currentMaterial.chapter ?? '',
+                tags: [],
+                sources: [evidence],
+              });
+            }}
+            onReparse={() => void reparse(currentMaterial)}
+            onScan={() => void recognizeMaterial(currentMaterial)}
+            onStopScan={() => scanAbort.current?.abort()}
+            onChapter={(chapter) =>
+              updateCourse(activeCourse.id, (c) => ({
+                ...c,
+                materials: c.materials.map((m) =>
+                  materialKey(m) === materialKey(currentMaterial)
+                    ? { ...m, chapter }
+                    : m,
+                ),
+              }))
+            }
+            onCorrect={(passages) =>
+              updateCourse(activeCourse.id, (c) => ({
+                ...c,
+                materials: c.materials.map((m) =>
+                  materialKey(m) === materialKey(currentMaterial)
+                    ? {
+                        ...m,
+                        passages,
+                        content: undefined,
+                        status: '已人工校正',
+                        coverage: {
+                          ...m.coverage,
+                          characters: passages.reduce(
+                            (n, p) => n + p.text.length,
+                            0,
                           ),
-                        }))
+                          truncated: m.coverage?.truncated ?? false,
+                        },
                       }
-                    >
-                      <option value="">未分类</option>
-                      {activeChapters.map((c) => (
-                        <option key={c}>{c}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <button
-                    className="primary"
-                    disabled={!text}
-                    onClick={() => {
-                      go('study');
-                      setScope('custom');
-                      setSelectedFiles([materialKey(currentMaterial)]);
-                      setScopeOpen(true);
-                      setQuestion(
-                        `请解释《${currentMaterial.name}》中的核心概念。`,
-                      );
-                    }}
-                  >
-                    用这份资料提问
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-                {currentMaterial.type === 'PDF' && currentMaterial.fileId ? (
-                  <iframe
-                    title={`${currentMaterial.name}原文`}
-                    className="document-frame"
-                    src={`/api/files?id=${encodeURIComponent(currentMaterial.fileId)}`}
-                  />
-                ) : text ? (
-                  <div className="document-text">
-                    <Markdown text={text} />
-                  </div>
-                ) : (
-                  <div className="empty">
-                    <p>
-                      暂无可读取正文。可使用“识别扫描文字”，或在“校正提取文字”中补充。
-                    </p>
-                  </div>
-                )}
-                <MaterialCorrection
-                  key={materialKey(currentMaterial)}
-                  material={currentMaterial}
-                  disabled={!!uploadProgress || !!syncError}
-                  onSave={(passages) =>
-                    updateCourse(activeCourse.id, (c) => ({
-                      ...c,
-                      materials: c.materials.map((m) =>
-                        materialKey(m) === materialKey(currentMaterial)
-                          ? {
-                              ...m,
-                              passages,
-                              content: undefined,
-                              status: '已人工校正',
-                              coverage: {
-                                ...m.coverage,
-                                characters: passages.reduce(
-                                  (n, p) => n + p.text.length,
-                                  0,
-                                ),
-                                truncated: m.coverage?.truncated ?? false,
-                              },
-                            }
-                          : m,
-                      ),
-                    }))
-                  }
-                />
-                <p className="muted">
-                  扫描识别在本机完成，PDF 每次最多前 20
-                  页；空白页或未读取页不代表已纳入检索。
-                </p>
-                <details className="extraction">
-                  <summary>查看提取的文字与定位</summary>
-                  {currentMaterial.passages?.map((p, i) => (
-                    <div key={i}>
-                      <small>{p.section}</small>
-                      <p>{p.text}</p>
-                    </div>
-                  )) ?? <p>{currentMaterial.content ?? '暂无正文'}</p>}
-                </details>
-              </>
-            ) : (
-              <div className="empty">上传资料后，在这里阅读原文。</div>
-            )}
+                    : m,
+                ),
+              }))
+            }
+          />
+        ) : (
+          <section className="panel empty">
+            上传资料后，在这里阅读原文。
           </section>
-        </div>
+        )}
       </>
     );
   }
@@ -3723,6 +3723,7 @@ export default function Home() {
             )
           }
           onOpenNote={openNote}
+          onOpenQuestion={(course, question) => go('lab', { course, question })}
           onAddCourse={() => setNewCourseOpen(true)}
         />
       );
@@ -3860,6 +3861,19 @@ export default function Home() {
             今日学习
           </button>
           <button
+            onClick={() => {
+              go('home');
+              requestAnimationFrame(() =>
+                document
+                  .getElementById('my-courses')
+                  ?.scrollIntoView({ block: 'start' }),
+              );
+            }}
+          >
+            <BookOpen size={19} />
+            我的课程
+          </button>
+          <button
             className={
               activeView === 'knowledge' && noteCollection !== 'trash'
                 ? 'active'
@@ -3869,13 +3883,6 @@ export default function Home() {
           >
             <Database size={19} />
             全部笔记
-          </button>
-          <button
-            className={activeView === 'graph' ? 'active' : ''}
-            onClick={() => go('graph')}
-          >
-            <Network size={19} />
-            知识图谱
           </button>
           <button
             className={activeView === 'review' ? 'active' : ''}
@@ -3891,6 +3898,16 @@ export default function Home() {
             )}
           </button>
         </nav>
+        <details className="sidebar-tools">
+          <summary>学习工具</summary>{' '}
+          <button
+            className={activeView === 'graph' ? 'active' : ''}
+            onClick={() => go('graph')}
+          >
+            <Network size={19} />
+            知识图谱
+          </button>
+        </details>
         <div className="sidebar-heading favorites-heading">
           <span>收藏</span>
           <Star size={14} />
@@ -4065,14 +4082,26 @@ export default function Home() {
           </div>
         )}
         <div className="page-stage">
-          <aside className="version-strip">
-            <span>
-              <strong>研学增强版</strong> · 与原版分别保存 · 示例内容可直接浏览
-            </span>
-            <button onClick={() => go('lab', { course: activeCourse.id })}>
-              教材校准与自测 →
-            </button>
-          </aside>
+          {welcome && activeView === 'home' && (
+            <aside className="version-strip">
+              <span>
+                <strong>研学增强版</strong> · 从教材出发，练习后安排下一步
+              </span>
+              <button
+                aria-label="关闭介绍"
+                onClick={() => {
+                  setWelcome(false);
+                  try {
+                    localStorage.setItem('course-kb-welcome-04', 'dismissed');
+                  } catch {
+                    /* optional preference */
+                  }
+                }}
+              >
+                知道了
+              </button>
+            </aside>
+          )}
           {inCourse && courses.length > 0 && (
             <>
               <div className="course-heading">
@@ -4090,13 +4119,16 @@ export default function Home() {
                     <BookOpen size={17} />
                     课程笔记 {courseNotes.length}
                   </button>
-                  <button
-                    className="course-delete-action"
-                    onClick={() => setPendingDeleteCourse(activeCourse)}
-                  >
-                    <Trash2 size={16} />
-                    删除课程
-                  </button>
+                  <details className="course-more">
+                    <summary>更多</summary>
+                    <button
+                      className="course-delete-action"
+                      onClick={() => setPendingDeleteCourse(activeCourse)}
+                    >
+                      <Trash2 size={16} />
+                      删除课程
+                    </button>
+                  </details>
                 </div>
               </div>
               <nav className="course-tabs" aria-label="课程功能">
@@ -4132,70 +4164,72 @@ export default function Home() {
           ) : activeView === 'course' ? (
             courseView()
           ) : activeView === 'lab' ? (
-            <StudyLab
+            <LearningFlow
               key={activeCourse.id}
               course={activeCourse}
               model={model}
+              questionId={practiceQuestion}
               disabled={!!syncError || syncStatus === 'offline'}
               onChange={(studyLab) =>
                 updateCourse(activeCourse.id, (c) => ({ ...c, studyLab }))
               }
               onSource={setSource}
-              onChapter={(chapter) =>
-                go('course', { course: activeCourse.id, chapter })
-              }
-              onAsk={askFromGuide}
-              onAddChapter={(chapter) =>
-                updateCourse(activeCourse.id, (c) =>
-                  c.guide &&
-                  c.guide.chapters.length < 16 &&
-                  !c.guide.chapters.some((ch) => ch.title === chapter.title)
-                    ? {
-                        ...c,
-                        guide: {
-                          ...c.guide,
-                          updatedAt: new Date().toISOString(),
-                          chapters: [...c.guide.chapters, chapter],
-                        },
-                      }
-                    : c,
-                )
-              }
-              onPracticePlan={(plan, studyLab) => {
-                setReviewPlans((current) =>
-                  current.some((p) => p.id === plan.id)
-                    ? current
-                    : [...current, plan],
-                );
-                setCourses((current) =>
-                  current.map((c) =>
-                    c.id === activeCourse.id ? { ...c, studyLab } : c,
-                  ),
-                );
-                setToast('已加入复习计划，可修改日期与任务。');
+              onRead={() => go('materials')}
+              onExplain={(_term, prompt) => {
+                go('study');
+                setActiveSessionId('');
+                setScope('course');
+                setQuestion(prompt);
               }}
-              onPlan={(plan, check) => {
+              onPlan={(plan, studyLab) => {
                 setReviewPlans((current) =>
                   current.some((p) => p.id === plan.id)
                     ? current
                     : [...current, plan],
                 );
-                updateCourse(activeCourse.id, (c) => ({
-                  ...c,
-                  studyLab: {
-                    ...c.studyLab,
-                    checks: c.studyLab?.checks?.map((item) =>
-                      item.id === check.id
-                        ? { ...item, planId: plan.id }
-                        : item,
-                    ),
-                  },
-                }));
-                setToast('自测后的复习安排已保存。');
+                updateCourse(activeCourse.id, (c) => ({ ...c, studyLab }));
+                setToast('已加入复习计划，可调整日期并直接打开关联题目。');
               }}
             />
           ) : activeView === 'materials' ? (
-            materialsView()
+            <div
+              className={`reading-workspace ${readingChat ? 'with-chat' : ''}`}
+              data-mobile-pane={readingTab}
+            >
+              <div className="reading-switch actions">
+                <button onClick={() => setReadingTab('read')}>教材</button>
+                <button
+                  disabled={!readingChat}
+                  onClick={() => setReadingTab('chat')}
+                >
+                  问答
+                </button>
+                <button onClick={() => setLabTool('calibration')}>
+                  教材校准
+                </button>
+              </div>
+              <div className="reading-main">{materialsView()}</div>
+              {readingChat && (
+                <aside className="reading-chat">
+                  <div className="actions">
+                    <button
+                      onClick={() => {
+                        setReadingChat(false);
+                        setReadingTab('read');
+                      }}
+                    >
+                      收起问答
+                    </button>
+                    <button
+                      onClick={() => go('study', { session: activeSessionId })}
+                    >
+                      完整问答页
+                    </button>
+                  </div>
+                  {studyView()}
+                </aside>
+              )}
+            </div>
           ) : activeView === 'study' ? (
             studyView()
           ) : activeView === 'knowledge' ? (
@@ -4564,6 +4598,42 @@ export default function Home() {
           {sourceLocation?.status === 'deleted' && (
             <p className="notice">来源资料已移入回收站，历史引用仍保留。</p>
           )}
+          {sourceLocation?.material &&
+            !sourceLocation.material.deletedAt &&
+            sourceLocation.passage && (
+              <button
+                onClick={() => {
+                  const material = sourceLocation.material!;
+                  const owner = courses.find((c) =>
+                    c.materials.some(
+                      (m) => materialKey(m) === materialKey(material),
+                    ),
+                  );
+                  if (!owner) return;
+                  const passage = Math.max(
+                    0,
+                    material.passages?.indexOf(sourceLocation.passage!) ?? 0,
+                  );
+                  updateCourse(owner.id, (c) => ({
+                    ...c,
+                    reading: {
+                      fileId: material.fileId,
+                      name: material.name,
+                      passage,
+                      updatedAt: new Date().toISOString(),
+                    },
+                  }));
+                  go('materials', {
+                    course: owner.id,
+                    file: materialKey(material),
+                  });
+                  setReadingTab('read');
+                  setSource(null);
+                }}
+              >
+                在教材中阅读这一段
+              </button>
+            )}
           <blockquote className="source-quote">
             <mark>{source.quote}</mark>
           </blockquote>
@@ -4598,6 +4668,17 @@ export default function Home() {
               移除资料
             </button>
           </div>
+        </Modal>
+      )}
+      {labTool && (
+        <Modal wide labelId="lab-tool-title" onClose={() => setLabTool(null)}>
+          <div className="modal-heading">
+            <h2 id="lab-tool-title">
+              {labTool === 'calibration' ? '教材校准' : '检索评测工具'}
+            </h2>
+            <button onClick={() => setLabTool(null)}>关闭</button>
+          </div>
+          {labTools(labTool)}
         </Modal>
       )}
       {showSettings && (
@@ -4676,6 +4757,15 @@ export default function Home() {
             <small className="muted">
               正文 JSON 不含附件字节。跨电脑迁移请使用下方“含附件迁移包”。
             </small>
+            <button
+              disabled={!activeCourse.id}
+              onClick={() => {
+                setShowSettings(false);
+                setLabTool('benchmark');
+              }}
+            >
+              检索评测工具
+            </button>
             <BackupPanel
               onExport={exportMigration}
               onRestore={restoreMigration}

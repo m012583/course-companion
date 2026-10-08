@@ -4,6 +4,7 @@ export type ReviewTask = {
   date: string;
   minutes: number;
   noteIds: string[];
+  questionId?: string;
   done: boolean;
 };
 export type ReviewPlan = {

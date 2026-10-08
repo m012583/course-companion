@@ -221,20 +221,21 @@ export function planFromAttempt(
     title: `${course.name} · ${a.question.term}`,
     goal: `依据作答 ${a.id}：${a.question.prompt}`,
     startDate: date,
-    endDate: addDays(date, 2),
+    endDate: addDays(date, a.correct ? 4 : 2),
     dailyMinutes: 20,
     source: 'manual',
     createdAt: now,
     updatedAt: now,
-    tasks: [0, 2].map((day, i) => ({
+    tasks: [0, a.correct ? 4 : 2].map((day, i) => ({
       id: `${a.id}-${i}`,
       title: `${i ? '重做并解释' : '回看原文'}：${a.question.prompt}`.slice(
         0,
-        200,
+        160,
       ),
       date: addDays(date, day),
       minutes: 10,
       noteIds: [],
+      questionId: a.questionId,
       done: false,
     })),
   };

@@ -1,8 +1,10 @@
 'use client';
-import { useState } from 'react';
+import { practiceAdvice } from '@/lib/learning-flow';
+import { useState, useRef, useEffect } from 'react';
 import type { Evidence } from '@/lib/knowledge';
 import type { GuideChapter } from '@/lib/course-guide';
 import type { LearningCheck } from '@/lib/learning-check';
+import { validatePlan } from '@/lib/review-plans';
 import type { ReviewPlan } from '@/lib/review-plans';
 import {
   answerQuestion,
@@ -25,7 +27,17 @@ export default function PracticePanel({
   onChange,
   onSource,
   onPlan,
+  initialFilter = 'all',
+  initialQuestionId = '',
+  focusCheckId,
+  onExplain,
+  onTarget,
 }: {
+  initialFilter?: string;
+  initialQuestionId?: string;
+  focusCheckId?: string;
+  onExplain?: (term: string, prompt: string) => void;
+  onTarget?: (question: PracticeQuestion) => void;
   course: { id: string; name: string; guide?: { chapters: GuideChapter[] } };
   state?: PracticeState;
   checks: LearningCheck[];
@@ -34,12 +46,25 @@ export default function PracticePanel({
   onSource: (e: Evidence) => void;
   onPlan: (p: ReviewPlan, state: PracticeState) => void;
 }) {
-  const [filter, setFilter] = useState('all'),
+  const [filter, setFilter] = useState(initialFilter),
     [query, setQuery] = useState(''),
     [chapter, setChapter] = useState('');
-  const [editing, setEditing] = useState<PracticeQuestion | null>(null),
+  const [editing, setEditing] = useState<PracticeQuestion | null>(() => {
+      const q = state.questions.find(
+        (q) =>
+          q.id === initialQuestionId && !q.deletedAt && q.status === 'draft',
+      );
+      return q ? structuredClone(q) : null;
+    }),
     [error, setError] = useState('');
-  const [active, setActive] = useState(''),
+  const [active, setActive] = useState(
+      state.questions.some(
+        (q) =>
+          q.id === initialQuestionId && !q.deletedAt && q.status === 'ready',
+      )
+        ? initialQuestionId
+        : '',
+    ),
     [answer, setAnswer] = useState(-1),
     [submitted, setSubmitted] = useState(false);
   const [preview, setPreview] = useState<{
@@ -47,10 +72,34 @@ export default function PracticePanel({
     attemptId: string;
   } | null>(null);
   const [removeId, setRemoveId] = useState('');
+  const focusRef = useRef<HTMLElement>(null);
+  const editorRef = useRef<HTMLElement>(null);
+  const previewRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (active) {
+      focusRef.current?.scrollIntoView({ block: 'start' });
+      focusRef.current?.focus({ preventScroll: true });
+    }
+  }, [active]);
+  const editingId = editing?.id,
+    previewId = preview?.attemptId;
+  useEffect(() => {
+    if (editingId) {
+      editorRef.current?.scrollIntoView({ block: 'start' });
+      editorRef.current?.focus({ preventScroll: true });
+    }
+  }, [editingId]);
+  useEffect(() => {
+    if (previewId) {
+      previewRef.current?.scrollIntoView({ block: 'start' });
+      previewRef.current?.focus({ preventScroll: true });
+    }
+  }, [previewId]);
   const chosen = state.questions.find((q) => q.id === active && !q.deletedAt);
   const last = chosen ? latestAttempt(state, chosen.id) : undefined;
   const rows = state.questions.filter(
     (q) =>
+      (!focusCheckId || q.originId?.startsWith(`${focusCheckId}:`)) &&
       (filter === 'trash' ? !!q.deletedAt : !q.deletedAt) &&
       (!chapter || q.chapterId === chapter) &&
       `${q.prompt} ${q.term}`
@@ -77,7 +126,10 @@ export default function PracticePanel({
       });
       setEditing(null);
       setError('');
-      setActive('');
+      setActive(q.status === 'ready' ? q.id : '');
+      setAnswer(-1);
+      setSubmitted(false);
+      setPreview(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : '无法保存题目');
     }
@@ -104,101 +156,124 @@ export default function PracticePanel({
   }
   return (
     <section className="practice-panel">
+      {initialQuestionId &&
+        !state.questions.some(
+          (q) => q.id === initialQuestionId && !q.deletedAt,
+        ) && (
+          <p className="notice">
+            关联题目已删除或暂不可用，可在已删除题目中查找恢复。
+          </p>
+        )}
+      {!editing && error && (
+        <p role="alert" className="notice">
+          {error}
+        </p>
+      )}
       <section className="panel">
         <div className="lab-section-heading">
           <div>
             <h3>题库与错题</h3>
             <p className="muted">
-              手工建题无需 AI；AI 自测可转为待核对草稿。改题不会覆盖历史作答。
+              先核对草稿中的题目、答案与依据，再开始练习。历史作答会保留。
             </p>
           </div>
           <button className="primary" disabled={disabled} onClick={create}>
             手动建题
           </button>
         </div>
-        <div className="practice-filters">
-          <label>
-            查找题目
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="题干或知识点"
-            />
-          </label>
-          <label>
-            章节
-            <select
-              aria-label="章节"
-              value={chapter}
-              onChange={(e) => setChapter(e.target.value)}
-            >
-              <option value="">全部章节</option>
-              {course.guide?.chapters.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.title}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            范围
-            <select
-              aria-label="范围"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            >
-              <option value="all">全部题目</option>
-              <option value="wrong">待巩固错题</option>
-              <option value="draft">待核对草稿</option>
-              <option value="trash">已删除题目</option>
-            </select>
-          </label>
-        </div>
-        <details>
-          <summary>从已有自测导入题库草稿</summary>
-          {!checks.filter((c) => !c.deletedAt).length && (
-            <p>先在“两题自测”生成或体验示例题。</p>
-          )}
-          {checks
-            .filter((c) => !c.deletedAt)
-            .map((c) => (
-              <div className="lab-heading-row" key={c.id}>
-                <span>
-                  {new Date(c.createdAt).toLocaleString('zh-CN')} ·{' '}
-                  {c.questions.length} 题
-                </span>
-                <button
-                  disabled={
-                    disabled ||
-                    c.questions.every((q) =>
-                      state.questions.some(
-                        (p) => p.originId === `${c.id}:${q.id}`,
-                      ),
-                    )
-                  }
-                  onClick={() => {
-                    onChange({
-                      ...state,
-                      questions: [
-                        ...state.questions,
-                        ...checkToDrafts(
-                          c,
-                          state.questions,
-                          course.guide?.chapters ?? [],
-                        ),
-                      ],
-                    });
-                    setFilter('draft');
-                  }}
-                >
-                  导入为草稿
-                </button>
-              </div>
-            ))}
+        <details className="practice-filter-details">
+          <summary>查找与筛选 · {rows.length} 题</summary>
+          <div className="practice-filters">
+            <label>
+              查找题目
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="题干或知识点"
+              />
+            </label>
+            <label>
+              章节
+              <select
+                aria-label="章节"
+                value={chapter}
+                onChange={(e) => setChapter(e.target.value)}
+              >
+                <option value="">全部章节</option>
+                {course.guide?.chapters.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              范围
+              <select
+                aria-label="范围"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+              >
+                <option value="all">全部题目</option>
+                <option value="wrong">待巩固错题</option>
+                <option value="draft">待核对草稿</option>
+                <option value="trash">已删除题目</option>
+              </select>
+            </label>
+          </div>
         </details>
+        {!focusCheckId && (
+          <details>
+            <summary>从已有自测导入题库草稿</summary>
+            {!checks.filter((c) => !c.deletedAt).length && (
+              <p>先在“快速自测”生成或体验示例题。</p>
+            )}
+            {checks
+              .filter((c) => !c.deletedAt)
+              .map((c) => (
+                <div className="lab-heading-row" key={c.id}>
+                  <span>
+                    {new Date(c.createdAt).toLocaleString('zh-CN')} ·{' '}
+                    {c.questions.length} 题
+                  </span>
+                  <button
+                    disabled={
+                      disabled ||
+                      c.questions.every((q) =>
+                        state.questions.some(
+                          (p) => p.originId === `${c.id}:${q.id}`,
+                        ),
+                      )
+                    }
+                    onClick={() => {
+                      onChange({
+                        ...state,
+                        questions: [
+                          ...state.questions,
+                          ...checkToDrafts(
+                            c,
+                            state.questions,
+                            course.guide?.chapters ?? [],
+                          ),
+                        ],
+                      });
+                      setFilter('draft');
+                    }}
+                  >
+                    导入为草稿
+                  </button>
+                </div>
+              ))}
+          </details>
+        )}
       </section>
       {editing && (
-        <section className="panel practice-editor">
+        <section
+          className="panel practice-editor"
+          ref={editorRef}
+          tabIndex={-1}
+          aria-label="核对与编辑题目"
+        >
           <h3>
             {state.questions.some((q) => q.id === editing.id)
               ? '编辑题目'
@@ -331,7 +406,7 @@ export default function PracticePanel({
               取消
             </button>
             <button className="primary" disabled={disabled} onClick={save}>
-              保存题目
+              {editing.status === 'ready' ? '保存并开始练习' : '保存题目草稿'}
             </button>
           </div>
           {error && (
@@ -341,93 +416,24 @@ export default function PracticePanel({
           )}
         </section>
       )}
-      <section className="panel">
-        <h3>题目列表 · {rows.length}</h3>
-        {!rows.length && (
-          <p className="muted">暂无符合条件的题目，可手动建题或导入自测。</p>
-        )}
-        {rows.map((q) => (
-          <article className="practice-row" key={q.id}>
-            <div>
-              <strong>{q.prompt}</strong>
-              <p className="muted">
-                {q.term} · {q.status === 'draft' ? '待核对' : '可练习'} ·{' '}
-                {state.attempts.filter((a) => a.questionId === q.id).length}{' '}
-                次作答
-              </p>
-            </div>
-            <div className="actions">
-              {q.deletedAt ? (
-                <button
-                  disabled={disabled}
-                  onClick={() =>
-                    onChange({
-                      ...state,
-                      questions: state.questions.map((p) =>
-                        p.id === q.id ? { ...p, deletedAt: undefined } : p,
-                      ),
-                    })
-                  }
-                >
-                  恢复题目
-                </button>
-              ) : (
-                <>
-                  <button
-                    disabled={disabled || q.status !== 'ready'}
-                    onClick={() => {
-                      setActive(q.id);
-                      setAnswer(-1);
-                      setSubmitted(false);
-                      setPreview(null);
-                    }}
-                  >
-                    开始练习
-                  </button>
-                  <button
-                    disabled={disabled}
-                    onClick={() => {
-                      setEditing(structuredClone(q));
-                      setError('');
-                    }}
-                  >
-                    编辑
-                  </button>
-                  <button disabled={disabled} onClick={() => setRemoveId(q.id)}>
-                    删除
-                  </button>
-                </>
-              )}
-            </div>
-            {removeId === q.id && (
-              <div className="notice">
-                <p>移入已删除题目？作答历史保留，可随时恢复。</p>
-                <button onClick={() => setRemoveId('')}>取消</button>
-                <button
-                  disabled={disabled}
-                  onClick={() => {
-                    onChange({
-                      ...state,
-                      questions: state.questions.map((p) =>
-                        p.id === q.id
-                          ? { ...p, deletedAt: new Date().toISOString() }
-                          : p,
-                      ),
-                    });
-                    setRemoveId('');
-                    setActive('');
-                  }}
-                >
-                  确认删除
-                </button>
-              </div>
-            )}
-          </article>
-        ))}
-      </section>
       {chosen && (
-        <section className="panel">
-          <h3>练习：{chosen.term}</h3>
+        <section
+          className="panel active-practice"
+          ref={focusRef}
+          tabIndex={-1}
+          aria-label="当前练习"
+        >
+          <div className="lab-section-heading">
+            <h3>练习：{chosen.term}</h3>
+            <button
+              onClick={() => {
+                setActive('');
+                setPreview(null);
+              }}
+            >
+              返回题目列表
+            </button>
+          </div>
           <fieldset className="check-question">
             <legend>{chosen.prompt}</legend>
             {chosen.options.map((o, i) => (
@@ -499,7 +505,51 @@ export default function PracticePanel({
                     </select>
                   </label>
                 )}
+                <p className="notice">{practiceAdvice(last)}</p>
+                {rows.some(
+                  (q) => q.id !== chosen.id && !latestAttempt(state, q.id),
+                ) && (
+                  <button
+                    className="primary"
+                    disabled={disabled}
+                    onClick={() => {
+                      const next = rows.find(
+                        (q) =>
+                          q.id !== chosen.id && !latestAttempt(state, q.id),
+                      );
+                      if (!next) return;
+                      if (next.status === 'draft') {
+                        setEditing(structuredClone(next));
+                        setActive('');
+                      } else {
+                        setActive(next.id);
+                        setAnswer(-1);
+                        setSubmitted(false);
+                        setPreview(null);
+                      }
+                    }}
+                  >
+                    继续下一题
+                  </button>
+                )}
                 <div className="actions">
+                  {onExplain && (
+                    <button
+                      onClick={() =>
+                        onExplain(
+                          chosen.term,
+                          `我在“${chosen.term}”的练习中${last.correct ? '答对了但想理解得更深入' : `答错了（${last.reason || '原因尚未确定'}）`}。题目：${chosen.prompt}。请依据教材，先给一个提示，再分步解释，并指出适用条件。`,
+                        )
+                      }
+                    >
+                      重新讲解
+                    </button>
+                  )}
+                  {onTarget && (
+                    <button onClick={() => onTarget(chosen)}>
+                      生成同类练习
+                    </button>
+                  )}
                   <button
                     disabled={disabled}
                     onClick={() => {
@@ -548,7 +598,7 @@ export default function PracticePanel({
         </section>
       )}
       {preview && (
-        <section className="panel">
+        <section className="panel" ref={previewRef} tabIndex={-1}>
           <h3>确认复习安排</h3>
           <label>
             计划名称
@@ -563,10 +613,36 @@ export default function PracticePanel({
               }
             />
           </label>
+          <p className="muted">
+            答错默认今天回看、两天后重练；答对默认四天后重练。可修改日期，规则不代表长期掌握度。
+          </p>
           {preview.plan.tasks.map((t) => (
-            <p key={t.id}>
-              {t.date} · {t.title} · {t.minutes} 分钟
-            </p>
+            <label key={t.id}>
+              {t.title}
+              <input
+                type="date"
+                aria-label={`复习日期：${t.title}`}
+                value={t.date}
+                min={preview.plan.startDate}
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  const tasks = preview.plan.tasks.map((item) =>
+                    item.id === t.id ? { ...item, date: e.target.value } : item,
+                  );
+                  setPreview({
+                    ...preview,
+                    plan: {
+                      ...preview.plan,
+                      tasks,
+                      endDate: tasks
+                        .map((item) => item.date)
+                        .sort()
+                        .at(-1)!,
+                    },
+                  });
+                }}
+              />
+            </label>
           ))}
           <div className="actions">
             <button onClick={() => setPreview(null)}>取消</button>
@@ -578,6 +654,12 @@ export default function PracticePanel({
                   state.attempts.find((a) => a.id === preview.attemptId)?.planId
                 )
                   return;
+                const issue = validatePlan(preview.plan);
+                if (issue) {
+                  setError(issue);
+                  return;
+                }
+                setError('');
                 onPlan(preview.plan, {
                   ...state,
                   attempts: state.attempts.map((a) =>
@@ -593,6 +675,99 @@ export default function PracticePanel({
             </button>
           </div>
         </section>
+      )}
+      {!chosen && !editing && (
+        <>
+          <section className="panel">
+            <h3>题目列表 · {rows.length}</h3>
+            {!rows.length && (
+              <p className="muted">
+                暂无符合条件的题目，可手动建题或导入自测。
+              </p>
+            )}
+            {rows.map((q) => (
+              <article className="practice-row" key={q.id}>
+                <div>
+                  <strong>{q.prompt}</strong>
+                  <p className="muted">
+                    {q.term} · {q.status === 'draft' ? '待核对' : '可练习'} ·{' '}
+                    {state.attempts.filter((a) => a.questionId === q.id).length}{' '}
+                    次作答
+                  </p>
+                </div>
+                <div className="actions">
+                  {q.deletedAt ? (
+                    <button
+                      disabled={disabled}
+                      onClick={() =>
+                        onChange({
+                          ...state,
+                          questions: state.questions.map((p) =>
+                            p.id === q.id ? { ...p, deletedAt: undefined } : p,
+                          ),
+                        })
+                      }
+                    >
+                      恢复题目
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        disabled={disabled || q.status !== 'ready'}
+                        onClick={() => {
+                          setActive(q.id);
+                          setAnswer(-1);
+                          setSubmitted(false);
+                          setPreview(null);
+                        }}
+                      >
+                        开始练习
+                      </button>
+                      <button
+                        disabled={disabled}
+                        onClick={() => {
+                          setEditing(structuredClone(q));
+                          setError('');
+                        }}
+                      >
+                        {q.status === 'draft' ? '核对题目' : '编辑'}
+                      </button>
+                      <button
+                        disabled={disabled}
+                        onClick={() => setRemoveId(q.id)}
+                      >
+                        删除
+                      </button>
+                    </>
+                  )}
+                </div>
+                {removeId === q.id && (
+                  <div className="notice">
+                    <p>移入已删除题目？作答历史保留，可随时恢复。</p>
+                    <button onClick={() => setRemoveId('')}>取消</button>
+                    <button
+                      disabled={disabled}
+                      onClick={() => {
+                        onChange({
+                          ...state,
+                          questions: state.questions.map((p) =>
+                            p.id === q.id
+                              ? { ...p, deletedAt: new Date().toISOString() }
+                              : p,
+                          ),
+                        });
+                        setRemoveId('');
+                        setActive('');
+                      }}
+                    >
+                      确认删除
+                    </button>
+                  </div>
+                )}
+              </article>
+            ))}
+          </section>
+        </>
       )}
       <section className="panel">
         <h3>近期练习反馈</h3>

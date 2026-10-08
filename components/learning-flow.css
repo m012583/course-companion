@@ -1,0 +1,322 @@
+.learning-flow {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.learning-flow .lab-tabs {
+  margin: 0;
+  padding: 0 0 12px;
+}
+.flow-steps {
+  display: flex;
+  gap: 12px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.flow-steps li {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.flow-steps li span {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+.flow-steps li[aria-current] {
+  color: var(--green-dark);
+  font-weight: 650;
+}
+.flow-steps li[aria-current] span {
+  background: var(--green);
+  color: white;
+}
+.flow-setup summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.flow-setup summary svg {
+  vertical-align: middle;
+  margin-right: 8px;
+}
+.flow-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin-top: 16px;
+}
+.flow-options label {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+  min-width: 180px;
+}
+.flow-options input,
+.flow-options select {
+  width: 100%;
+}
+.practice-filter-details {
+  margin-top: 12px;
+}
+.practice-panel > .panel {
+  padding: 20px;
+}
+.practice-panel :is(.active-practice, .practice-editor) {
+  scroll-margin-top: 20px;
+}
+.practice-panel section:focus {
+  outline: 2px solid var(--green);
+  outline-offset: 4px;
+}
+.practice-panel .notice {
+  margin: 14px 0;
+}
+.learning-next {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.learning-next .panel {
+  padding: 20px;
+}
+.learning-next h3 {
+  margin: 0;
+}
+.learning-next p {
+  font-size: 14px;
+  color: var(--muted);
+}
+.course-more {
+  position: relative;
+}
+.course-more summary {
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: var(--surface);
+  font-size: 14px;
+}
+.course-more > button {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  white-space: nowrap;
+  z-index: 8;
+  box-shadow: 0 5px 20px #0001;
+}
+.sidebar-tools {
+  margin-top: 12px;
+}
+.sidebar-tools summary {
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 8px;
+}
+.sidebar-tools button {
+  width: 100%;
+  justify-content: flex-start;
+  border: 0;
+  background: transparent;
+}
+.reading-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.reading-workspace.with-chat {
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+}
+.reading-switch {
+  grid-column: 1 / -1;
+}
+.reading-switch > button:nth-child(-n + 2) {
+  display: none;
+}
+.reading-main,
+.reading-chat {
+  min-width: 0;
+}
+.reading-workspace .materials-layout {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+.reading-workspace .list-panel {
+  max-height: 170px;
+  overflow: auto;
+  padding: 14px;
+}
+.reading-workspace .list-panel .panel-heading {
+  margin-bottom: 8px;
+}
+.reading-workspace .material-row {
+  padding: 5px;
+}
+.reader-controls {
+  display: flex;
+  align-items: end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.reader-controls label {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+  min-width: 130px;
+  font-size: 13px;
+}
+.reader-controls select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.reader-passage {
+  max-height: 62vh;
+  overflow: auto;
+  padding: 12px 6px;
+  overflow-wrap: anywhere;
+}
+.reader-passage h3 {
+  margin-top: 0;
+}
+.reader-actions {
+  margin-top: 16px;
+}
+.reader-tools {
+  margin-top: 18px;
+}
+.reader-tools summary {
+  cursor: pointer;
+}
+.reading-chat {
+  position: sticky;
+  top: 12px;
+}
+.reading-chat > .actions {
+  margin-bottom: 10px;
+}
+.reading-chat .sessions,
+.reading-chat .conversation-heading {
+  display: none;
+}
+.reading-chat .study-layout {
+  display: block;
+}
+.reading-chat .conversation {
+  min-height: 400px;
+  max-height: 82vh;
+  padding: 16px;
+}
+.reading-chat .composer {
+  min-width: 0;
+}
+@media (min-width: 901px) {
+  .practice-filter-details:not([open]) .practice-filters {
+    display: grid;
+  }
+}
+@media (max-width: 1050px) {
+  .reading-workspace.with-chat {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .reading-switch > button:nth-child(-n + 2) {
+    display: inline-flex;
+  }
+  .reading-workspace[data-mobile-pane='chat'] .reading-main {
+    display: none;
+  }
+  .reading-workspace[data-mobile-pane='read'] .reading-chat {
+    display: none;
+  }
+  .reading-chat {
+    position: static;
+  }
+}
+@media (max-width: 640px) {
+  .learning-next {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .learning-next .panel,
+  .learning-flow .panel,
+  .material-reader {
+    padding: 16px;
+  }
+  .course-heading {
+    margin-bottom: 12px;
+  }
+  .course-heading h1 {
+    font-size: 24px;
+  }
+  .course-heading .eyebrow {
+    display: none;
+  }
+  .course-tabs {
+    margin-bottom: 18px;
+  }
+  .flow-steps {
+    gap: 5px;
+  }
+  .flow-steps li {
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12px;
+    text-align: center;
+  }
+  .reader-controls button {
+    padding: 8px;
+  }
+  .reader-passage {
+    max-height: 58vh;
+  }
+  .learning-flow .lab-section-heading p {
+    font-size: 13px;
+    margin-bottom: 8px;
+  }
+  .reading-workspace .list-panel {
+    max-height: 120px;
+  }
+}
+
+.flow-setup summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.flow-setup summary::before {
+  content: '▸';
+}
+.flow-setup[open] summary::before {
+  content: '▾';
+}
+.flow-setup:not([open]) {
+  padding: 14px 20px;
+}
+.material-library {
+  padding: 14px 20px;
+  margin-bottom: 12px;
+}
+.material-library > summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.material-library[open] > summary {
+  margin-bottom: 16px;
+}
+.material-library .list-panel {
+  border: 0;
+}
+.reading-main > .material-reader {
+  margin-top: 12px;
+}

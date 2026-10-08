@@ -36,6 +36,7 @@ type Props = {
   onPractice: () => void;
   onOpenNote: (note: Note) => void;
   onAddCourse: () => void;
+  onOpenQuestion?: (courseId: string, questionId: string) => void;
 };
 const dateLabel = (
   date: string,
@@ -487,6 +488,7 @@ export default function ReviewPlanner({
   onPractice,
   onOpenNote,
   onAddCourse,
+  onOpenQuestion,
 }: Props) {
   const today = localDate();
   const [week, setWeek] = useState(() => weekStart(today));
@@ -745,6 +747,15 @@ export default function ReviewPlanner({
                         </span>
                       )}
                     </footer>
+                    {task.questionId && onOpenQuestion && (
+                      <button
+                        onClick={() =>
+                          onOpenQuestion(plan.courseId, task.questionId!)
+                        }
+                      >
+                        打开关联练习
+                      </button>
+                    )}
                     {!!task.noteIds.length && (
                       <div className="task-note-links">
                         {task.noteIds.map((id) => {

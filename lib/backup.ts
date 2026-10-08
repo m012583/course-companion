@@ -106,8 +106,30 @@ export function validateWorkspace(value: unknown): BackupState {
         throw new Error('导览信息无效。');
       readGuideContent(c.guide, true);
     }
+    if (
+      c.reading !== undefined &&
+      (!record(c.reading) ||
+        typeof c.reading.name !== 'string' ||
+        !Number.isInteger(c.reading.passage) ||
+        Number(c.reading.passage) < 0 ||
+        Number(c.reading.passage) > 100000 ||
+        typeof c.reading.updatedAt !== 'string' ||
+        (c.reading.fileId !== undefined &&
+          typeof c.reading.fileId !== 'string'))
+    )
+      throw new Error('阅读位置格式无效。');
     if (c.studyLab !== undefined) {
       if (!record(c.studyLab)) throw new Error('研学记录格式无效。');
+      if (
+        c.studyLab.flow !== undefined &&
+        (!record(c.studyLab.flow) ||
+          ['chapterId', 'checkId', 'updatedAt'].some(
+            (k) =>
+              typeof (c.studyLab as Record<string, Record<string, unknown>>)
+                .flow[k] !== 'string',
+          ))
+      )
+        throw new Error('学习流程记录格式无效。');
       if (c.studyLab.practice !== undefined)
         validatePractice(c.studyLab.practice);
       if (

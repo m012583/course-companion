@@ -16,7 +16,6 @@ import {
   extractHeadings,
   materialId,
   contentFingerprint,
-  type CalibrationConfig,
 } from '@/lib/textbook-calibration';
 import { rankEvidence } from '@/lib/retrieval';
 import { demoCheck, demoMaterial, RETRIEVAL_FIXTURES } from '@/lib/demo-course';
@@ -28,13 +27,9 @@ import {
 import type { ReviewPlan } from '@/lib/review-plans';
 import LearningMarkdown from './learning-markdown';
 import PracticePanel from './practice-panel';
-import type { PracticeState } from '@/lib/practice';
 
-export type StudyLabState = {
-  calibration?: CalibrationConfig;
-  checks?: LearningCheck[];
-  practice?: PracticeState;
-};
+import type { StudyLabState } from '@/lib/learning-flow';
+export type { StudyLabState } from '@/lib/learning-flow';
 type LabCourse = {
   id: string;
   name: string;
@@ -44,6 +39,7 @@ type LabCourse = {
 };
 export default function StudyLab({
   course,
+  mode,
   model,
   onChange,
   onSource,
@@ -55,6 +51,7 @@ export default function StudyLab({
   disabled = false,
 }: {
   course: LabCourse;
+  mode?: 'calibration' | 'benchmark' | 'check';
   model: string;
   onChange: (state: StudyLabState) => void;
   onSource: (source: Evidence) => void;
@@ -70,7 +67,7 @@ export default function StudyLab({
   );
   const [tab, setTab] = useState<
     'calibration' | 'check' | 'practice' | 'benchmark'
-  >('calibration');
+  >(mode ?? 'calibration');
   const [keys, setKeys] = useState(
     course.studyLab?.calibration?.materialKeys ?? readable.map(materialId),
   );
@@ -171,40 +168,44 @@ export default function StudyLab({
   const result = active?.answers ? checkResult(active, active.answers) : null;
   return (
     <section className="study-lab">
-      <header className="lab-intro">
-        <span className="eyebrow">让学习回到你的教材</span>
-        <h2>有依据地读，再检查自己是否理解</h2>
-        <p>先对照课程，再做两道自测，最后把需要巩固的内容安排进复习。</p>
-      </header>
-      <nav className="lab-tabs" aria-label="研学工具">
-        <button
-          className={tab === 'calibration' ? 'active' : ''}
-          onClick={() => setTab('calibration')}
-        >
-          <BookOpen size={16} />
-          教材校准
-        </button>
-        <button
-          className={tab === 'check' ? 'active' : ''}
-          onClick={() => setTab('check')}
-        >
-          <Check size={16} />
-          两题自测
-        </button>
-        <button
-          className={tab === 'benchmark' ? 'active' : ''}
-          onClick={() => setTab('benchmark')}
-        >
-          <FlaskConical size={16} />
-          检索验证
-        </button>
-        <button
-          className={tab === 'practice' ? 'active' : ''}
-          onClick={() => setTab('practice')}
-        >
-          题库与错题
-        </button>
-      </nav>
+      {!mode && (
+        <header className="lab-intro">
+          <span className="eyebrow">让学习回到你的教材</span>
+          <h2>有依据地读，再检查自己是否理解</h2>
+          <p>先对照课程，再做两道自测，最后把需要巩固的内容安排进复习。</p>
+        </header>
+      )}
+      {!mode && (
+        <nav className="lab-tabs" aria-label="研学工具">
+          <button
+            className={tab === 'calibration' ? 'active' : ''}
+            onClick={() => setTab('calibration')}
+          >
+            <BookOpen size={16} />
+            教材校准
+          </button>
+          <button
+            className={tab === 'check' ? 'active' : ''}
+            onClick={() => setTab('check')}
+          >
+            <Check size={16} />
+            快速自测
+          </button>
+          <button
+            className={tab === 'benchmark' ? 'active' : ''}
+            onClick={() => setTab('benchmark')}
+          >
+            <FlaskConical size={16} />
+            检索验证
+          </button>
+          <button
+            className={tab === 'practice' ? 'active' : ''}
+            onClick={() => setTab('practice')}
+          >
+            题库与错题
+          </button>
+        </nav>
+      )}
       {tab === 'practice' && (
         <PracticePanel
           course={course}
