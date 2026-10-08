@@ -417,14 +417,16 @@ export default function Home() {
     ) ??
     materials[0];
   const allMaterials = courses.flatMap((c) =>
-    c.materials.map((m) => ({ ...m, courseName: c.name })),
+    c.materials.map((m) => ({ ...m, courseName: c.name, ownerId: c.id })),
   );
   const readable = allMaterials.filter((m) => m.content || m.passages?.length);
+  const materialChoiceKey = (m: Material & { ownerId?: string }) =>
+    m.fileId || `${m.ownerId ?? activeCourse.id}:${m.name}`;
   const contextMaterials =
     scope === 'all'
       ? readable
       : scope === 'custom'
-        ? readable.filter((m) => selectedFiles.includes(materialKey(m)))
+        ? readable.filter((m) => selectedFiles.includes(materialChoiceKey(m)))
         : materials.filter((m) => m.content || m.passages?.length);
   const courseNotes = notes.filter((n) =>
       n.courseId
@@ -1871,15 +1873,15 @@ export default function Home() {
           {scope === 'custom' && (
             <div className="file-checks">
               {readable.map((m) => (
-                <label key={materialKey(m)}>
+                <label key={materialChoiceKey(m)}>
                   <input
                     type="checkbox"
-                    checked={selectedFiles.includes(materialKey(m))}
+                    checked={selectedFiles.includes(materialChoiceKey(m))}
                     onChange={(e) =>
                       setSelectedFiles((current) =>
                         e.target.checked
-                          ? [...current, materialKey(m)]
-                          : current.filter((id) => id !== materialKey(m)),
+                          ? [...current, materialChoiceKey(m)]
+                          : current.filter((id) => id !== materialChoiceKey(m)),
                       )
                     }
                   />
@@ -2172,7 +2174,12 @@ export default function Home() {
                 key={task.id}
                 onClick={() => {
                   setReviewQueue(null);
-                  go('review');
+                  if (task.questionId)
+                    go('lab', {
+                      course: plan.courseId,
+                      question: task.questionId,
+                    });
+                  else go('review');
                 }}
               >
                 <span className="agenda-dot" />
@@ -2641,7 +2648,7 @@ export default function Home() {
               setReadingTab('chat');
               setActiveSessionId('');
               setScope('custom');
-              setSelectedFiles([materialKey(currentMaterial)]);
+              setSelectedFiles([materialChoiceKey(currentMaterial)]);
               setQuestion(prompt);
             }}
             onNote={(text, evidence) => {
