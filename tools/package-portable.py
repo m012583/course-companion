@@ -6,7 +6,7 @@ import json
 
 root = Path(__file__).resolve().parent.parent
 folders = ['app', 'components', 'hooks', 'lib', 'types', 'public', 'db', 'migrations', 'docs', 'tests', 'tools', '.openai']
-names = ['.env.example', '.gitignore', '.oxfmtrc.json', '.oxlintrc.json', 'components.json', 'next-env.d.ts', 'next.config.ts', 'package.json', 'package-lock.json', 'README.md', 'README-PORTABLE.md', 'start.cmd', 'start.sh', 'tsconfig.json', 'vite.config.ts']
+names = ['.env.example', '.gitignore', '.gitattributes', '.oxfmtrc.json', '.oxlintrc.json', 'components.json', 'next-env.d.ts', 'next.config.ts', 'package.json', 'package-lock.json', 'README.md', 'README-PORTABLE.md', 'start.cmd', 'start.sh', 'tsconfig.json', 'vite.config.ts']
 excluded = {'node_modules', '.git', '.wrangler', 'work', 'dist', '.vinext', '.next', '__pycache__', 'outputs', 'ocr'}
 files = [root / name for name in names if (root / name).is_file()]
 for folder in folders:
