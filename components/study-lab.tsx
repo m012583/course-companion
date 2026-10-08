@@ -15,6 +15,7 @@ import {
   calibrate,
   extractHeadings,
   materialId,
+  contentFingerprint,
   type CalibrationConfig,
 } from '@/lib/textbook-calibration';
 import { rankEvidence } from '@/lib/retrieval';
@@ -26,10 +27,13 @@ import {
 } from '@/lib/learning-check';
 import type { ReviewPlan } from '@/lib/review-plans';
 import LearningMarkdown from './learning-markdown';
+import PracticePanel from './practice-panel';
+import type { PracticeState } from '@/lib/practice';
 
 export type StudyLabState = {
   calibration?: CalibrationConfig;
   checks?: LearningCheck[];
+  practice?: PracticeState;
 };
 type LabCourse = {
   id: string;
@@ -47,6 +51,7 @@ export default function StudyLab({
   onAddChapter,
   onPlan,
   onAsk,
+  onPracticePlan,
   disabled = false,
 }: {
   course: LabCourse;
@@ -57,14 +62,15 @@ export default function StudyLab({
   onAddChapter: (chapter: GuideChapter) => void;
   onPlan: (plan: ReviewPlan, check: LearningCheck) => void;
   onAsk: (chapter: GuideChapter, term: string, question: string) => void;
+  onPracticePlan: (plan: ReviewPlan, state: StudyLabState) => void;
   disabled?: boolean;
 }) {
   const readable = course.materials.filter(
     (m) => !m.deletedAt && (m.content || m.passages?.length),
   );
-  const [tab, setTab] = useState<'calibration' | 'check' | 'benchmark'>(
-    'calibration',
-  );
+  const [tab, setTab] = useState<
+    'calibration' | 'check' | 'practice' | 'benchmark'
+  >('calibration');
   const [keys, setKeys] = useState(
     course.studyLab?.calibration?.materialKeys ?? readable.map(materialId),
   );
@@ -192,7 +198,26 @@ export default function StudyLab({
           <FlaskConical size={16} />
           检索验证
         </button>
+        <button
+          className={tab === 'practice' ? 'active' : ''}
+          onClick={() => setTab('practice')}
+        >
+          题库与错题
+        </button>
       </nav>
+      {tab === 'practice' && (
+        <PracticePanel
+          course={course}
+          state={course.studyLab?.practice}
+          checks={checks}
+          disabled={disabled}
+          onSource={onSource}
+          onChange={(practice) => onChange({ ...course.studyLab, practice })}
+          onPlan={(plan, practice) =>
+            onPracticePlan(plan, { ...course.studyLab, practice })
+          }
+        />
+      )}
       {tab === 'calibration' && (
         <>
           <div className="lab-columns">
@@ -249,6 +274,7 @@ export default function StudyLab({
                     onChange({
                       ...course.studyLab,
                       calibration: {
+                        ...course.studyLab?.calibration,
                         materialKeys: keys,
                         toc,
                         updatedAt: new Date().toISOString(),
@@ -345,10 +371,65 @@ export default function StudyLab({
                     </div>
                     <div>
                       {row.evidence.length ? (
-                        sources(row.evidence)
+                        <>
+                          {sources(row.evidence)}
+                          <label>
+                            人工确认对应的原文
+                            <select
+                              value=""
+                              disabled={disabled}
+                              onChange={(event) => {
+                                const evidence = row.evidence.find(
+                                  (e) => e.id === event.target.value,
+                                );
+                                if (!evidence) return;
+                                const calibration =
+                                  course.studyLab?.calibration;
+                                onChange({
+                                  ...course.studyLab,
+                                  calibration: {
+                                    materialKeys: keys,
+                                    toc,
+                                    updatedAt: new Date().toISOString(),
+                                    confirmations: {
+                                      ...calibration?.confirmations,
+                                      [`${row.chapterId}|${row.term}`]: {
+                                        evidence,
+                                        fingerprint:
+                                          contentFingerprint(selected),
+                                        confirmedAt: new Date().toISOString(),
+                                      },
+                                    },
+                                  },
+                                });
+                                setMessage(
+                                  '已保存人工确认；教材文字变化后将提示重新核对。',
+                                );
+                              }}
+                            >
+                              <option value="">查看原文后选择确认</option>
+                              {row.evidence.map((e) => (
+                                <option key={e.id} value={e.id}>
+                                  {e.name} · {e.section}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                        </>
                       ) : (
                         <p className="muted">
                           检查资料是否完整，或补充教材相应章节。
+                        </p>
+                      )}
+                      {course.studyLab?.calibration?.confirmations?.[
+                        `${row.chapterId}|${row.term}`
+                      ] && (
+                        <p className="muted">
+                          {course.studyLab.calibration.confirmations[
+                            `${row.chapterId}|${row.term}`
+                          ].fingerprint === contentFingerprint(selected)
+                            ? '已人工确认对应依据'
+                            : '教材内容已变化，原人工确认需复核'}
                         </p>
                       )}
                     </div>

@@ -1,3 +1,4 @@
+import { sourceAnchor } from './source-anchor';
 import type { ConceptGraph, NodePosition } from './note-graph';
 export type Passage = {
   text: string;
@@ -14,6 +15,8 @@ export type Coverage = {
   legacy?: boolean;
 };
 export type Evidence = {
+  passageId?: string;
+  materialVersion?: string;
   id: string;
   name: string;
   fileId?: string;
@@ -239,6 +242,7 @@ export function retrieve(
       page: passage.page,
       section: passage.section,
       quote: passage.text,
+      ...sourceAnchor(material, passage),
     });
     used += passage.text.length;
   }

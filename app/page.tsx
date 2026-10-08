@@ -1,4 +1,7 @@
 'use client';
+import { locateSource } from '@/lib/source-anchor';
+import MaterialCorrection from '@/components/material-correction';
+import { readNoteDraft, type NoteDraft } from '@/lib/note-draft';
 import ReactMarkdown from 'react-markdown';
 import Image from 'next/image';
 import NoteVisuals from '@/components/note-visuals';
@@ -154,6 +157,7 @@ type ApiData = {
   scope?: Message['scope'];
 };
 type Workspace = {
+  noteDraft?: NoteDraft;
   courses: Course[];
   notes: Note[];
   courseId?: string;
@@ -430,6 +434,9 @@ export default function Home() {
       session: string;
       index: number;
     } | null>(null);
+  const [draftOpen, setDraftOpen] = useState(true);
+  const [discardDraft, setDiscardDraft] = useState(false);
+  const [saveRetry, setSaveRetry] = useState(0);
   const [source, setSource] = useState<Evidence | null>(null);
   const [reviewQueue, setReviewQueue] = useState<string[] | null>(null),
     [reviewIndex, setReviewIndex] = useState(0),
@@ -442,6 +449,9 @@ export default function Home() {
     saveQueue = useRef(Promise.resolve()),
     chatEndRef = useRef<HTMLDivElement>(null),
     routeApplied = useRef(false);
+  const [scanActive, setScanActive] = useState(false);
+  const scanAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => scanAbort.current?.abort(), []);
   const imageInput = useRef<HTMLInputElement>(null);
   const attachmentBatch = useRef(0);
   const activeCourse =
@@ -516,6 +526,12 @@ export default function Home() {
       : noteCollection === 'starred'
         ? '我的收藏'
         : '全部笔记';
+  const sourceLocation = source
+    ? locateSource(
+        source,
+        allCourses.flatMap((c) => c.materials),
+      )
+    : null;
   const reviewNote = reviewQueue
     ? notes.find((n) => n.id === reviewQueue[reviewIndex])
     : undefined;
@@ -528,8 +544,13 @@ export default function Home() {
     activeView,
     preferences,
     model,
+    noteDraft: { note: draftNote, origin: draftOrigin },
   };
   function applyState(state: Workspace) {
+    const draft = readNoteDraft(state.noteDraft);
+    setDraftNote(draft.note);
+    setDraftOrigin(draft.origin);
+    setDraftOpen(!!draft.note);
     setCourses(state.courses);
     setReviewPlans(state.reviewPlans ?? []);
     const restoredCourseId =
@@ -555,6 +576,7 @@ export default function Home() {
       activeView: state.activeView ?? 'home',
       preferences: state.preferences ?? DEFAULT_PREFERENCES,
       model: state.model ?? 'deepseek-v4-flash',
+      noteDraft: readNoteDraft(state.noteDraft),
     });
     setActiveCourseId(restoredCourseId);
     setActiveSessionId(state.sessionId ?? '');
@@ -599,8 +621,32 @@ export default function Home() {
             localStorage.getItem('course-companion-v2-state') || 'null',
           );
         if (!cancelled && Array.isArray(state?.courses)) {
+          let recoveredDraft = false;
+          try {
+            const localDraft = localStorage.getItem(
+              'course-companion-v2-note-draft',
+            );
+            if (localDraft) {
+              const cached = JSON.parse(localDraft);
+              if (cached.revision === (data.revision ?? 0)) {
+                const draft = readNoteDraft(cached.draft);
+                recoveredDraft =
+                  JSON.stringify(draft) !==
+                  JSON.stringify(readNoteDraft(state.noteDraft));
+                state.noteDraft = draft;
+              }
+            }
+          } catch {
+            try {
+              localStorage.setItem(
+                'course-companion-v2-note-draft-corrupt',
+                localStorage.getItem('course-companion-v2-note-draft') ?? '',
+              );
+            } catch {}
+            setToast('本机草稿无法读取，已保留原始副本；继续使用服务端草稿。');
+          }
           applyState(state);
-          if (!data.state) loadedState.current = '';
+          if (!data.state || recoveredDraft) loadedState.current = '';
           revisionRef.current = data.revision ?? 0;
         }
       } catch {
@@ -636,9 +682,17 @@ export default function Home() {
       activeView,
       preferences,
       model,
+      noteDraft: { note: draftNote, origin: draftOrigin },
     };
     try {
       localStorage.setItem('course-companion-v2-state', JSON.stringify(state));
+      localStorage.setItem(
+        'course-companion-v2-note-draft',
+        JSON.stringify({
+          draft: state.noteDraft,
+          revision: revisionRef.current,
+        }),
+      );
     } catch {
       queueMicrotask(() =>
         setSyncError('浏览器备份空间不足，请下载正文备份。'),
@@ -690,6 +744,9 @@ export default function Home() {
     preferences,
     model,
     hydrated,
+    draftNote,
+    draftOrigin,
+    saveRetry,
   ]);
   useEffect(() => {
     if (!hydrated) return;
@@ -877,6 +934,12 @@ export default function Home() {
     setToast(guide ? '课程与导览已创建' : '课程已创建');
   }
   function noteFromGuide(chapter: GuideChapter) {
+    if (draftNote) {
+      setDraftOpen(true);
+      setToast('请先保存或丢弃当前草稿，再创建另一篇笔记。');
+      return;
+    }
+    setDiscardDraft(false);
     const existing = courseNotes.find(
       (note) => note.guideChapterId === chapter.id,
     );
@@ -886,6 +949,7 @@ export default function Home() {
     }
     const now = new Date().toISOString();
     setDraftOrigin(null);
+    setDraftOpen(true);
     setDraftNote({
       id: crypto.randomUUID(),
       title: chapter.title,
@@ -1290,6 +1354,53 @@ export default function Home() {
       setIsImageUploading(false);
     }
   }
+  async function recognizeMaterial(material: Material) {
+    if (!material.fileId || scanAbort.current) return;
+    const courseId = activeCourse.id,
+      controller = new AbortController();
+    scanAbort.current = controller;
+    setScanActive(true);
+    setUploadError('');
+    setUploadProgress('读取扫描件…');
+    try {
+      const response = await fetch(
+        `/api/files?id=${encodeURIComponent(material.fileId)}`,
+        { signal: controller.signal },
+      );
+      if (!response.ok) throw new Error('原始附件不可用。');
+      const { readScan } = await import('@/lib/scan-reader');
+      const data = await readScan(
+        new File([await response.blob()], material.name),
+        setUploadProgress,
+        controller.signal,
+      );
+      if (!data.passages.length)
+        throw new Error(
+          '未识别出文字，原资料保留。请使用更清晰的扫描件或人工补充。',
+        );
+      updateCourse(courseId, (c) => ({
+        ...c,
+        materials: c.materials.map((m) =>
+          m.fileId === material.fileId && !m.deletedAt
+            ? { ...m, ...data, content: undefined, status: 'OCR 待核对' }
+            : m,
+        ),
+      }));
+      setToast('文字识别完成，请在“校正提取文字”核对公式和识别结果。');
+    } catch (e) {
+      setUploadError(
+        controller.signal.aborted
+          ? '已停止识别，原资料保留。'
+          : e instanceof Error
+            ? e.message
+            : '识别失败。',
+      );
+    } finally {
+      scanAbort.current = null;
+      setScanActive(false);
+      setUploadProgress('');
+    }
+  }
   async function reparse(material: Material) {
     if (!material.fileId) return;
     const courseId = activeCourse.id;
@@ -1478,6 +1589,12 @@ export default function Home() {
     }
   }
   function startNote(message?: Message, index?: number) {
+    if (draftNote) {
+      setDraftOpen(true);
+      setToast('请先保存或丢弃当前草稿，再创建另一篇笔记。');
+      return;
+    }
+    setDiscardDraft(false);
     if (!courses.length) {
       setNewCourseOpen(true);
       setToast('先添加一门课程，就可以开始记笔记。');
@@ -1487,6 +1604,7 @@ export default function Home() {
       selection = window.getSelection()?.toString().trim(),
       selectedText =
         selection && message?.text.includes(selection) ? selection : undefined;
+    setDraftOpen(true);
     setDraftNote({
       id: crypto.randomUUID(),
       title: message
@@ -1518,6 +1636,10 @@ export default function Home() {
   function saveDraft(event: { preventDefault(): void }) {
     event.preventDefault();
     if (!draftNote?.title.trim() || !draftNote.text.trim()) return;
+    if (!allCourses.some((c) => !c.deletedAt && c.id === draftNote.courseId)) {
+      setToast('请先选择有效课程或恢复草稿所属课程。');
+      return;
+    }
     setNotes((current) => [
       {
         ...draftNote,
@@ -1582,6 +1704,21 @@ export default function Home() {
     persistenceEpoch.current++;
     try {
       await saveQueue.current;
+      const saved = await fetch('/api/workspace', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          state: workspaceState,
+          revision: revisionRef.current,
+        }),
+      });
+      const savedInfo = (await saved.json()) as {
+        error?: string;
+        revision: number;
+      };
+      if (!saved.ok)
+        throw new Error(savedInfo.error || '当前数据尚未保存，已取消恢复。');
+      revisionRef.current = savedInfo.revision;
       const response = await fetch('/api/backup', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1605,6 +1742,13 @@ export default function Home() {
       } as Workspace;
       applyState(state);
       localStorage.setItem('course-companion-v2-state', JSON.stringify(state));
+      localStorage.setItem(
+        'course-companion-v2-note-draft',
+        JSON.stringify({
+          draft: readNoteDraft(state.noteDraft),
+          revision: revisionRef.current,
+        }),
+      );
       setSelectedNoteId('');
       setQuestion('');
       setQuestionImages([]);
@@ -1698,7 +1842,7 @@ export default function Home() {
     setPendingDeleteCourse(null);
     setReviewQueue(null);
     setSelectedNoteId('');
-    setDraftNote(null);
+    setDraftOpen(false);
     go('home');
     setToast('课程已移入回收站，资料、笔记和复习计划均已保留。');
   }
@@ -2338,7 +2482,7 @@ export default function Home() {
               disabled={!!uploadProgress}
               type="file"
               multiple
-              accept=".pdf,.docx,.txt,.md,.markdown"
+              accept=".pdf,.docx,.txt,.md,.markdown,.png,.jpg,.jpeg,.webp"
               onChange={addMaterials}
             />
           </label>
@@ -2442,6 +2586,24 @@ export default function Home() {
                       <RefreshCw size={16} />
                       重新解析
                     </button>
+                    {currentMaterial.fileId &&
+                      /^(PDF|PNG|JPG|JPEG|WEBP)$/.test(
+                        currentMaterial.type,
+                      ) && (
+                        <button
+                          disabled={!!uploadProgress}
+                          onClick={() =>
+                            void recognizeMaterial(currentMaterial)
+                          }
+                        >
+                          识别扫描文字
+                        </button>
+                      )}
+                    {scanActive && (
+                      <button onClick={() => scanAbort.current?.abort()}>
+                        停止识别
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="reading-meta">
@@ -2496,9 +2658,43 @@ export default function Home() {
                   </div>
                 ) : (
                   <div className="empty">
-                    <p>没有可读取正文。扫描件需要先转为含文字的 PDF。</p>
+                    <p>
+                      暂无可读取正文。可使用“识别扫描文字”，或在“校正提取文字”中补充。
+                    </p>
                   </div>
                 )}
+                <MaterialCorrection
+                  key={materialKey(currentMaterial)}
+                  material={currentMaterial}
+                  disabled={!!uploadProgress || !!syncError}
+                  onSave={(passages) =>
+                    updateCourse(activeCourse.id, (c) => ({
+                      ...c,
+                      materials: c.materials.map((m) =>
+                        materialKey(m) === materialKey(currentMaterial)
+                          ? {
+                              ...m,
+                              passages,
+                              content: undefined,
+                              status: '已人工校正',
+                              coverage: {
+                                ...m.coverage,
+                                characters: passages.reduce(
+                                  (n, p) => n + p.text.length,
+                                  0,
+                                ),
+                                truncated: m.coverage?.truncated ?? false,
+                              },
+                            }
+                          : m,
+                      ),
+                    }))
+                  }
+                />
+                <p className="muted">
+                  扫描识别在本机完成，PDF 每次最多前 20
+                  页；空白页或未读取页不代表已纳入检索。
+                </p>
                 <details className="extraction">
                   <summary>查看提取的文字与定位</summary>
                   {currentMaterial.passages?.map((p, i) => (
@@ -3780,6 +3976,9 @@ export default function Home() {
             <Settings2 size={18} />
             设置与备份
           </button>
+          {draftNote && (
+            <button onClick={() => setDraftOpen(true)}>继续编辑笔记草稿</button>
+          )}
           <small>
             {syncStatus === 'saving'
               ? '正在保存…'
@@ -3832,6 +4031,17 @@ export default function Home() {
         {syncError && (
           <div className="sync-error" role="alert">
             <span>{syncError}</span>
+            <button
+              onClick={() => {
+                if (syncBlocked.current) {
+                  setToast('请先下载正文备份，再刷新核对另一窗口的数据。');
+                  return;
+                }
+                setSaveRetry((n) => n + 1);
+              }}
+            >
+              重试保存
+            </button>
             {allCourses.some((course) =>
               course.guide?.chapters.some(
                 (chapter) => chapter.lesson && !chapter.lesson.deletedAt,
@@ -3951,6 +4161,19 @@ export default function Home() {
                     : c,
                 )
               }
+              onPracticePlan={(plan, studyLab) => {
+                setReviewPlans((current) =>
+                  current.some((p) => p.id === plan.id)
+                    ? current
+                    : [...current, plan],
+                );
+                setCourses((current) =>
+                  current.map((c) =>
+                    c.id === activeCourse.id ? { ...c, studyLab } : c,
+                  ),
+                );
+                setToast('已加入复习计划，可修改日期与任务。');
+              }}
               onPlan={(plan, check) => {
                 setReviewPlans((current) =>
                   current.some((p) => p.id === plan.id)
@@ -4162,14 +4385,14 @@ export default function Home() {
             />
           );
         })()}
-      {draftNote && (
-        <Modal labelId="draft-title" wide onClose={() => setDraftNote(null)}>
+      {draftNote && draftOpen && (
+        <Modal labelId="draft-title" wide onClose={() => setDraftOpen(false)}>
           <div className="modal-heading">
             <h2 id="draft-title">整理成一条知识笔记</h2>
             <button
               className="icon-button"
               aria-label="关闭草稿"
-              onClick={() => setDraftNote(null)}
+              onClick={() => setDraftOpen(false)}
             >
               <X size={20} />
             </button>
@@ -4277,10 +4500,34 @@ export default function Home() {
                 保留引用来源，保存后加入今日复习。
               </small>
             )}
-            <button className="primary" type="submit">
-              <Save size={17} />
-              保存笔记
-            </button>
+            <div className="actions">
+              <button type="button" onClick={() => setDraftOpen(false)}>
+                稍后继续（保留草稿）
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!discardDraft) {
+                    setDiscardDraft(true);
+                    return;
+                  }
+                  setDraftNote(null);
+                  setDraftOrigin(null);
+                  setDiscardDraft(false);
+                }}
+              >
+                {discardDraft ? '确认丢弃草稿' : '丢弃草稿'}
+              </button>
+              <button className="primary" type="submit">
+                <Save size={17} />
+                保存笔记
+              </button>
+            </div>
+            {discardDraft && (
+              <p className="notice">
+                再次点击将清除此篇未保存草稿；已保存的笔记不受影响。
+              </p>
+            )}
           </form>
         </Modal>
       )}
@@ -4299,7 +4546,33 @@ export default function Home() {
             </button>
           </div>
           <p className="muted">{source.section} · 提取原文，供人工核对</p>
-          <blockquote className="source-quote">{source.quote}</blockquote>
+          {sourceLocation?.status === 'missing' && (
+            <p className="notice">
+              当前资料中未找到唯一对应来源，以下保留历史引用，不能视为已核实的当前原文。
+            </p>
+          )}
+          {sourceLocation?.status === 'changed' && (
+            <p className="notice">
+              资料文字已变化，历史引文无法精确定位，请重新核对。
+            </p>
+          )}
+          {sourceLocation?.status === 'updated' && (
+            <p className="notice">
+              教材已更新；此段原文仍可定位，其他内容需复核。
+            </p>
+          )}
+          {sourceLocation?.status === 'deleted' && (
+            <p className="notice">来源资料已移入回收站，历史引用仍保留。</p>
+          )}
+          <blockquote className="source-quote">
+            <mark>{source.quote}</mark>
+          </blockquote>
+          {sourceLocation?.passage && (
+            <details>
+              <summary>查看所在原文段落</summary>
+              <p className="source-quote">{sourceLocation.passage.text}</p>
+            </details>
+          )}
           {source.fileId && (
             <a
               className="button primary"

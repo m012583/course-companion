@@ -1,3 +1,4 @@
+import { sourceAnchor } from './source-anchor';
 import {
   retrieve,
   splitPassages,
@@ -117,6 +118,7 @@ export function rankEvidence(
       page: passage.page,
       section: passage.section,
       quote: passage.text,
+      ...sourceAnchor(material, passage),
     });
     if (result.length >= limit) break;
   }

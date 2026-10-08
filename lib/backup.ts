@@ -1,3 +1,5 @@
+import { readNoteDraft } from './note-draft';
+import { validatePractice } from './practice';
 import { readGuideContent } from './course-guide';
 import { validatePlan, type ReviewPlan } from './review-plans';
 export type BackupState = {
@@ -106,6 +108,8 @@ export function validateWorkspace(value: unknown): BackupState {
     }
     if (c.studyLab !== undefined) {
       if (!record(c.studyLab)) throw new Error('研学记录格式无效。');
+      if (c.studyLab.practice !== undefined)
+        validatePractice(c.studyLab.practice);
       if (
         c.studyLab.checks !== undefined &&
         (!Array.isArray(c.studyLab.checks) ||
@@ -201,7 +205,9 @@ export function validateWorkspace(value: unknown): BackupState {
     throw new Error('空间设置格式无效。');
   if (value.model !== undefined && typeof value.model !== 'string')
     throw new Error('模型设置格式无效。');
+  if (value.noteDraft !== undefined) readNoteDraft(value.noteDraft);
   const safeKeys = [
+    'noteDraft',
     'courses',
     'notes',
     'reviewPlans',

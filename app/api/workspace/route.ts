@@ -1,3 +1,5 @@
+import { validateWorkspace } from '@/lib/backup';
+import { commitWorkspace } from '@/lib/snapshots';
 import { storage } from '@/lib/storage';
 
 async function workspaceDb() {
@@ -47,7 +49,15 @@ export async function PUT(request: Request) {
   };
   if (!state || !Array.isArray(state.courses) || !Number.isInteger(revision))
     return Response.json({ error: '无效备份数据' }, { status: 400 });
-  const payload = JSON.stringify(state);
+  let payload: string;
+  try {
+    payload = JSON.stringify(validateWorkspace(state));
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : '无效工作区' },
+      { status: 400 },
+    );
+  }
   if (payload.length > 8000000)
     return Response.json({ error: '知识库过大，请分开保存' }, { status: 413 });
   try {
@@ -56,14 +66,9 @@ export async function PUT(request: Request) {
       .prepare(
         'INSERT OR IGNORE INTO workspace (id,payload,revision) VALUES (?, ?, 0)',
       )
-      .bind('local', '{"courses":[]}')
+      .bind('local', '{"courses":[],"notes":[]}')
       .run();
-    const result = await db
-      .prepare(
-        'UPDATE workspace SET payload = ?, revision = revision + 1 WHERE id = ? AND revision = ?',
-      )
-      .bind(payload, 'local', revision)
-      .run();
+    const result = await commitWorkspace(db, payload, revision, 'automatic');
     if (!result.meta.changes)
       return Response.json(
         { error: '另一个窗口已修改知识库，请刷新后重试' },

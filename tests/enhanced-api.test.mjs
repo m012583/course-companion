@@ -37,6 +37,9 @@ globalThis.__testStorage = {
     },
   },
   DB: {
+    async batch(statements) {
+      return Promise.all(statements.map((s) => s.run()));
+    },
     prepare(sql) {
       return {
         bind(...args) {
@@ -47,7 +50,10 @@ globalThis.__testStorage = {
                 : null;
             },
             async run() {
-              if (sql.startsWith('INSERT') && saved === null)
+              if (
+                sql.startsWith('INSERT OR IGNORE INTO workspace ') &&
+                saved === null
+              )
                 saved = JSON.parse(args[1]);
               if (sql.startsWith('UPDATE')) {
                 if (failCommit || args[2] !== revision)

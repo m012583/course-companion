@@ -1,0 +1,14 @@
+{
+  "verifiedAt": "2026-10-08T10:31:43.825Z",
+  "browser": "Headless Edge",
+  "desktop": true,
+  "tablet768": true,
+  "mobile390": true,
+  "manualBooleanQuestion": true,
+  "wrongReason": true,
+  "reviewPlan": true,
+  "repeatAttemptsPersisted": true,
+  "deleteRestore": true,
+  "pageErrors": [],
+  "limits": "模拟视口，不代表真实手机软键盘或用户试用。"
+}

@@ -36,3 +36,11 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+/public/ocr/
+/test-run.txt
+/work-audit.json
+
+# Commit only the blank environment template.
+!.env.example
+*.tsbuildinfo

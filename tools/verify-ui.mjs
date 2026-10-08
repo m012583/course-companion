@@ -1,0 +1,64 @@
+import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
+import { mkdir, writeFile } from 'node:fs/promises';
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+const base='http://127.0.0.1:3022';
+const health=await (await fetch(`${base}/api/health`)).json();
+assert.equal(health.instance,createHash('sha256').update(resolve('.').toLowerCase()).digest('hex').slice(0,16));
+assert.equal((await (await fetch(`${base}/api/ai-settings`)).json()).configured,false);
+const {chromium}=await import(pathToFileURL(resolve(process.env.PLAYWRIGHT_MODULE || 'node_modules/playwright-core','index.mjs')).href);
+const browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
+await mkdir('work/ui',{recursive:true});
+const context=await browser.newContext({viewport:{width:1440,height:960},acceptDownloads:true});
+const page=await context.newPage();const errors=[];
+page.on('pageerror',e=>errors.push(e.message));
+try {
+  await page.goto(base,{waitUntil:'networkidle'});
+  await page.screenshot({path:'work/ui/home.png',fullPage:true});
+  await writeFile('work/ui/home.txt',await page.locator('body').innerText());
+  await page.goto(`${base}/#view=lab&course=demo-linear`);
+  await page.getByRole('button',{name:'题库与错题',exact:true}).click();
+  await page.getByRole('button',{name:'手动建题',exact:true}).click();
+  await page.getByLabel('题型',{exact:true}).selectOption('boolean');
+  await page.getByLabel('题干',{exact:true}).fill('回归测试：矩阵乘法总能交换顺序。');
+  await page.getByLabel('知识点',{exact:true}).fill('矩阵乘法');
+  await page.getByLabel('正确选项',{exact:true}).selectOption('1');
+  await page.getByLabel('解析',{exact:true}).fill('矩阵乘法一般不可交换，AB 通常不等于 BA。');
+  await page.getByLabel('已核对题目、答案和来源，可用于练习').check();
+  await page.getByRole('button',{name:'保存题目',exact:true}).click();
+  const row=page.locator('.practice-row').filter({hasText:'回归测试：矩阵乘法'});
+  await row.getByRole('button',{name:'开始练习'}).click();
+  await page.locator('input[name="practice-answer"]').first().check();
+  await page.getByRole('button',{name:'提交本次作答'}).click();
+  await page.getByLabel('记录错因').selectOption('概念不清');
+  await page.getByRole('button',{name:'预览复习安排',exact:true}).click();
+  await page.getByRole('button',{name:'确认加入复习',exact:true}).click();
+  await page.getByRole('button',{name:'已加入复习',exact:true}).waitFor();
+  await page.getByRole('button',{name:'再练一次'}).click();
+  await page.locator('input[name="practice-answer"]').nth(1).check();
+  await page.getByRole('button',{name:'提交本次作答'}).click();
+  await page.getByText('本次答对 · 正确答案：错误',{exact:true}).waitFor();
+  await page.waitForTimeout(1000);
+  await page.reload({waitUntil:'networkidle'});
+  await page.getByRole('button',{name:'题库与错题',exact:true}).click();
+  assert.match(await page.locator('.practice-row').filter({hasText:'回归测试：矩阵乘法'}).innerText(),/2 次作答/);
+  await page.screenshot({path:'work/ui/practice-desktop.png',fullPage:true});
+  for(const width of [768,390]) {
+    await page.setViewportSize({width,height:844});
+    await page.screenshot({path:`work/ui/practice-${width}.png`,fullPage:true});
+    const sizes=await page.evaluate(()=>({scroll:document.documentElement.scrollWidth,width:innerWidth}));
+    assert.ok(sizes.scroll<=sizes.width+1,`Horizontal overflow at ${width}: ${JSON.stringify(sizes)}`);
+  }
+  await page.setViewportSize({width:1440,height:960});
+  await row.getByRole('button',{name:'删除',exact:true}).click();
+  await page.getByRole('button',{name:'确认删除',exact:true}).click();
+  await page.getByLabel('范围',{exact:true}).selectOption('trash');
+  await page.getByRole('button',{name:'恢复题目'}).click();
+  await page.getByLabel('范围',{exact:true}).selectOption('all');
+  assert.equal(await row.count(),1);
+  assert.deepEqual(errors,[]);
+  await writeFile('docs/evaluation/ui-update.json',JSON.stringify({verifiedAt:new Date().toISOString(),browser:'Headless Edge',desktop:true,tablet768:true,mobile390:true,manualBooleanQuestion:true,wrongReason:true,reviewPlan:true,repeatAttemptsPersisted:true,deleteRestore:true,pageErrors:errors,limits:'模拟视口，不代表真实手机软键盘或用户试用。'},null,2));
+  console.log('UI workflow passed');
+} catch(e) {await page.screenshot({path:'work/ui/failure.png',fullPage:true});await writeFile('work/ui/failure.txt',await page.locator('body').innerText());throw e;}
+finally {await browser.close();}

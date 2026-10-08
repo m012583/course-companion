@@ -5,6 +5,10 @@ export type CalibrationConfig = {
   materialKeys: string[];
   toc: string;
   updatedAt: string;
+  confirmations?: Record<
+    string,
+    { evidence: Evidence; fingerprint: string; confirmedAt: string }
+  >;
 };
 export const materialId = (m: Material) => m.fileId || m.name;
 export function extractHeadings(materials: Material[]) {

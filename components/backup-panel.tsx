@@ -1,5 +1,5 @@
 'use client';
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, Upload } from 'lucide-react';
 import { parseBackup } from '@/lib/backup';
 export default function BackupPanel({
@@ -26,6 +26,42 @@ export default function BackupPanel({
     [error, setError] = useState(''),
     [allowMissing, setAllowMissing] = useState(false),
     [message, setMessage] = useState('');
+  const [snapshots, setSnapshots] = useState<
+    { id: string; created_at: string; reason: string }[]
+  >([]);
+  useEffect(() => {
+    fetch('/api/snapshots')
+      .then((r) => r.json())
+      .then((d) =>
+        setSnapshots((d as { snapshots?: typeof snapshots }).snapshots ?? []),
+      )
+      .catch(() => {});
+  }, [message]);
+  async function loadSnapshot(id: string) {
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch(
+        `/api/backup?snapshot=${encodeURIComponent(id)}`,
+      );
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) throw new Error(data.error || '无法读取恢复点。');
+      const parsed = parseBackup(data);
+      setPending({
+        data,
+        name: '本机恢复点',
+        courses: parsed.state.courses.length,
+        notes: parsed.state.notes.length,
+        files: parsed.files.length,
+        missing: parsed.missing.length,
+      });
+      setAllowMissing(false);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '读取失败');
+    } finally {
+      setBusy(false);
+    }
+  }
   async function exportAll() {
     setBusy(true);
     setError('');
@@ -66,6 +102,27 @@ export default function BackupPanel({
           选择备份恢复
         </button>
       </div>
+      <details>
+        <summary>本机恢复点（{snapshots.length}）</summary>
+        <p className="muted">
+          修改前每隔至少 30 分钟保留一份，最近 20 份；恢复前另外保留最近 10
+          份。电脑故障仍需依靠下载的含附件迁移包。
+        </p>
+        {snapshots.map((s) => (
+          <div className="lab-heading-row" key={s.id}>
+            <span>
+              {new Date(s.created_at).toLocaleString('zh-CN')} ·{' '}
+              {s.reason === 'before-restore' ? '恢复前留档' : '自动留档'}
+            </span>
+            <button
+              disabled={busy || disabled}
+              onClick={() => void loadSnapshot(s.id)}
+            >
+              预览恢复
+            </button>
+          </div>
+        ))}
+      </details>
       <input
         hidden
         ref={input}

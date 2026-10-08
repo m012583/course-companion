@@ -1,0 +1,23 @@
+{
+  "verifiedDate": "2026-10-08",
+  "version": "0.3.0",
+  "basis": "用户提供的研学增强版 0.2",
+  "checks": {
+    "unitAndApiTests": {
+      "passed": 71,
+      "failed": 0
+    },
+    "typecheck": "passed",
+    "repositoryLint": "passed",
+    "productionBuild": "passed",
+    "browserPractice": "passed",
+    "browserDraftAndOCR": "passed",
+    "realD1R2Migration": "passed"
+  },
+  "limits": [
+    "没有执行新一轮付费 AI 评测",
+    "未验证第二台实体电脑或真实手机软键盘",
+    "依赖审计 29 项仍待修复，不能声称安全审计通过",
+    "团队信息按用户回复保留待补充"
+  ]
+}

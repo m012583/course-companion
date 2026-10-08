@@ -1,0 +1,10 @@
+{
+  "verifiedAt": "2026-10-08T10:42:59.388Z",
+  "realD1R2": true,
+  "practiceHistoryRoundtrip": true,
+  "draftAttachmentRemap": true,
+  "beforeRestoreSnapshotComplete": true,
+  "staleWriterRejected": true,
+  "malformedAttemptRejected": true,
+  "failedWritePreservedWorkspace": true
+}

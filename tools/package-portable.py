@@ -6,8 +6,8 @@ import json
 
 root = Path(__file__).resolve().parent.parent
 folders = ['app', 'components', 'hooks', 'lib', 'types', 'public', 'db', 'migrations', 'docs', 'tests', 'tools', '.openai']
-names = ['.env.example', '.gitignore', '.oxfmtrc.json', '.oxlintrc.json', 'components.json', 'next-env.d.ts', 'next.config.ts', 'package.json', 'package-lock.json', 'README-PORTABLE.md', 'start.cmd', 'start.sh', 'tsconfig.json', 'vite.config.ts']
-excluded = {'node_modules', '.git', '.wrangler', 'work', 'dist', '.vinext', '.next', '__pycache__', 'outputs'}
+names = ['.env.example', '.gitignore', '.oxfmtrc.json', '.oxlintrc.json', 'components.json', 'next-env.d.ts', 'next.config.ts', 'package.json', 'package-lock.json', 'README.md', 'README-PORTABLE.md', 'start.cmd', 'start.sh', 'tsconfig.json', 'vite.config.ts']
+excluded = {'node_modules', '.git', '.wrangler', 'work', 'dist', '.vinext', '.next', '__pycache__', 'outputs', 'ocr'}
 files = [root / name for name in names if (root / name).is_file()]
 for folder in folders:
     directory = root / folder
@@ -15,7 +15,7 @@ for folder in folders:
         files.extend(p for p in directory.rglob('*') if p.is_file() and not p.is_symlink() and not (set(p.relative_to(root).parts) & excluded) and not p.name.startswith('.env') and p.suffix not in {'.log', '.pyc'})
 output_dir = root / 'outputs'
 output_dir.mkdir(exist_ok=True)
-output = output_dir / '课伴-研学增强版-20261003.zip'
+output = output_dir / '课伴-研学增强版-0.3.0-20261008.zip'
 manifest = {}
 with ZipFile(output, 'w', ZIP_DEFLATED, compresslevel=6) as archive:
     for path in sorted(set(files)):

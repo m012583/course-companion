@@ -1,3 +1,4 @@
+import { commitWorkspace, ensureSnapshots } from '@/lib/snapshots';
 import { storage } from '@/lib/storage';
 import {
   bytesToBase64,
@@ -17,13 +18,20 @@ async function db() {
     .run();
   return database;
 }
-export async function GET() {
+export async function GET(request?: Request) {
   try {
-    const row = await (
-      await db()
-    )
-      .prepare('SELECT payload, revision FROM workspace WHERE id = ?')
-      .bind('local')
+    const database = await db();
+    const snapshot = request
+      ? new URL(request.url).searchParams.get('snapshot')
+      : null;
+    if (snapshot) await ensureSnapshots(database);
+    const row = await database
+      .prepare(
+        snapshot
+          ? 'SELECT payload, revision FROM workspace_snapshots WHERE id = ?'
+          : 'SELECT payload, revision FROM workspace WHERE id = ?',
+      )
+      .bind(snapshot || 'local')
       .first<{ payload: string; revision: number }>();
     if (!row) throw new Error('请先等待工作区保存，再导出。');
     const state = validateWorkspace(JSON.parse(row.payload));
@@ -129,12 +137,12 @@ export async function POST(request: Request) {
       )
       .bind('local', '{"courses":[],"notes":[]}')
       .run();
-    const result = await database
-      .prepare(
-        'UPDATE workspace SET payload = ?, revision = revision + 1 WHERE id = ? AND revision = ?',
-      )
-      .bind(JSON.stringify(restored), 'local', body.revision)
-      .run();
+    const result = await commitWorkspace(
+      database,
+      JSON.stringify(restored),
+      body.revision,
+      'before-restore',
+    );
     if (!result.meta.changes)
       throw new Error('恢复期间数据发生变化，已取消恢复，请刷新。');
     staged.length = 0;

@@ -291,3 +291,72 @@
     padding: 18px;
   }
 }
+
+.practice-panel {
+  display: grid;
+  gap: 20px;
+  min-width: 0;
+}
+.practice-filters {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 12px;
+  margin: 16px 0;
+}
+.practice-editor {
+  display: grid;
+  gap: 12px;
+}
+.practice-row {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--border, #e4e5e1);
+  overflow-wrap: anywhere;
+}
+.practice-row .actions {
+  flex-wrap: wrap;
+}
+.practice-panel label {
+  display: grid;
+  gap: 6px;
+}
+.practice-panel .check-option,
+.practice-panel .lab-checkline {
+  display: flex;
+}
+.practice-panel input:not([type='radio']):not([type='checkbox']),
+.practice-panel select,
+.practice-panel textarea {
+  width: 100%;
+  min-width: 0;
+}
+.lab-tabs {
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .practice-filters {
+    grid-template-columns: 1fr;
+  }
+  .lab-section-heading {
+    flex-wrap: wrap;
+  }
+}
+
+.practice-editor {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.practice-editor h3,
+.practice-editor p,
+.practice-editor .actions,
+.practice-editor label:has(textarea),
+.practice-editor .lab-checkline {
+  grid-column: 1 / -1;
+}
+@media (max-width: 640px) {
+  .practice-editor {
+    grid-template-columns: 1fr;
+  }
+}
+.source-quote mark {
+  background: #fff1b3;
+  color: inherit;
+}

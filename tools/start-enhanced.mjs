@@ -1,4 +1,10 @@
-import { copyFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:net';
@@ -88,10 +94,16 @@ if (port > first + 10) {
   console.error('No free local port found.');
   process.exit(1);
 }
-if (!existsSync('node_modules/.package-lock.json')) {
-  console.log(
-    'First launch: installing locked dependencies (internet required)...',
-  );
+const lockHash = createHash('sha256')
+  .update(readFileSync('package-lock.json'))
+  .digest('hex');
+const dependencyStamp = 'work/dependencies.sha256';
+if (
+  !existsSync('node_modules/.package-lock.json') ||
+  !existsSync(dependencyStamp) ||
+  readFileSync(dependencyStamp, 'utf8') !== lockHash
+) {
+  console.log('Installing updated locked dependencies (internet required)...');
   const install =
     process.platform === 'win32'
       ? spawnSync(
@@ -106,7 +118,13 @@ if (!existsSync('node_modules/.package-lock.json')) {
     );
     process.exit(1);
   }
+  writeFileSync(dependencyStamp, lockHash);
 }
+const assets = spawnSync(process.execPath, ['tools/prepare-ocr.mjs'], {
+  stdio: 'inherit',
+  windowsHide: true,
+});
+if (assets.status !== 0) process.exit(1);
 if (!existsSync('.env.local') && existsSync('.env.example'))
   copyFileSync('.env.example', '.env.local');
 const server = spawn(
