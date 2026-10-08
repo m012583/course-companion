@@ -1,0 +1,12 @@
+{
+  "verifiedAt": "2026-10-03T01:20:12.367Z",
+  "baseUrl": "http://127.0.0.1:3126",
+  "cleanWorkspace": true,
+  "noApiKey": true,
+  "attachmentByteRoundtrip": true,
+  "remappedSelectionsAndCitations": true,
+  "diagnosticAnswersAndPlanPreserved": true,
+  "corruptBackupRejectedWithoutWrites": true,
+  "staleRevisionRejected": true,
+  "notes": "同一台 Windows 电脑的独立解压目录，真实本地 D1/R2；未冒充第二台电脑或浏览器 UI 验收。"
+}
