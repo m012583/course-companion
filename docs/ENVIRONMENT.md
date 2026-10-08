@@ -56,3 +56,14 @@ npm.cmd run start:local
 `COURSE_KB_EVAL_URL` 供真实 AI 评测使用，只接受 localhost/127.0.0.1 的 HTTP 地址。默认 `--ai` 只运行 5 题；全量需显式指定 `--limit=80`，将产生实际服务调用。没有密钥时不运行。
 
 PDF 构建是可选文档工具，需要 Python、ReportLab、中文 TrueType 字体；不属于软件日常运行依赖。执行 `py -3 tools/build-tech-doc.py`，输出到 `output/pdf/`。
+
+
+## 0.5 本机 AI 设置
+
+推荐通过 `npm run start:local` 启动，再在界面选择 AI 服务、输入实际模型 ID 和密钥。界面配置加密保存于独立的 `local_ai_config` 表，优先于环境文件；清除界面配置可恢复环境文件配置。
+
+`COURSE_KB_AI_SECRET` 是启动器自动生成的本机加密密钥，保存在忽略的 `.env.local`，不要提交或分享。保留原文件即可跨重启解密；学习迁移包不包含此密钥或 AI 配置，换电脑后重新配置 AI。直接用 `npm run dev` 且未通过启动器初始化时，可继续使用环境文件方式；要使用界面加密保存，请改用 `start:local`。配置写入只接受同源、本机请求，不作为公网管理接口。
+
+界面“测试已保存的连接”只请求一句问候，不发送课程资料；真实服务会产生一次少量调用。复述核对会发送所选片段与已保存的复述，结果仍需人工核对。
+
+新增 `tools/verify-experience.mjs` 与旧验证脚本共用 `COURSE_KB_TEST_URL`。它要求未配置真实 AI 的独立 checkout，用本机临时模拟服务测试加密配置和复述接口，不应指向个人日常工作区。依赖清单没有新增运行时包。

@@ -57,6 +57,21 @@ export function validateWorkspace(value: unknown): BackupState {
       throw new Error('课程标识重复或内容格式无效。');
     ids.add(c.id);
     if (
+      c.citationReviews !== undefined &&
+      (!Array.isArray(c.citationReviews) ||
+        c.citationReviews.length > 1000 ||
+        c.citationReviews.some(
+          (r) =>
+            !record(r) ||
+            !validEvidence(r.evidence) ||
+            !['supports', 'partial', 'mismatch'].includes(String(r.verdict)) ||
+            ['id', 'claim', 'comment', 'correction', 'updatedAt'].some(
+              (k) => typeof r[k] !== 'string' || String(r[k]).length > 4000,
+            ),
+        ))
+    )
+      throw new Error('引用核对记录格式无效。');
+    if (
       c.materials.some(
         (m) =>
           !record(m) ||
@@ -120,6 +135,58 @@ export function validateWorkspace(value: unknown): BackupState {
       throw new Error('阅读位置格式无效。');
     if (c.studyLab !== undefined) {
       if (!record(c.studyLab)) throw new Error('研学记录格式无效。');
+      const lab = c.studyLab;
+      if (
+        lab.retellingDraft !== undefined &&
+        (!record(lab.retellingDraft) ||
+          typeof lab.retellingDraft.file !== 'string' ||
+          !Number.isInteger(lab.retellingDraft.passage) ||
+          Number(lab.retellingDraft.passage) < 0 ||
+          typeof lab.retellingDraft.answer !== 'string' ||
+          lab.retellingDraft.answer.length > 8000)
+      )
+        throw new Error('复述草稿格式无效。');
+      if (
+        lab.retellings !== undefined &&
+        (!Array.isArray(lab.retellings) ||
+          lab.retellings.length > 200 ||
+          lab.retellings.some(
+            (r) =>
+              !record(r) ||
+              ['id', 'prompt', 'answer', 'createdAt'].some(
+                (k) => typeof r[k] !== 'string' || String(r[k]).length > 8000,
+              ) ||
+              !Array.isArray(r.evidence) ||
+              !r.evidence.length ||
+              r.evidence.length > 8 ||
+              r.evidence.some((e) => !validEvidence(e)) ||
+              (r.assessment !== undefined &&
+                (typeof r.assessment !== 'string' ||
+                  !['understood', 'needs-work'].includes(r.assessment))) ||
+              (r.correction !== undefined &&
+                (typeof r.correction !== 'string' ||
+                  r.correction.length > 2000)) ||
+              (r.feedback !== undefined &&
+                (!record(r.feedback) ||
+                  ['covered', 'missing', 'issues', 'sourceIds'].some(
+                    (k) =>
+                      !Array.isArray(
+                        (r.feedback as Record<string, unknown>)[k],
+                      ) ||
+                      (r.feedback as Record<string, string[]>)[k].some(
+                        (x) => typeof x !== 'string',
+                      ),
+                  ) ||
+                  !(r.feedback.sourceIds as string[]).length ||
+                  (r.feedback.sourceIds as string[]).some(
+                    (id) =>
+                      !(r.evidence as Record<string, unknown>[]).some(
+                        (e) => e.id === id,
+                      ),
+                  ))),
+          ))
+      )
+        throw new Error('复述记录格式无效。');
       if (
         c.studyLab.flow !== undefined &&
         (!record(c.studyLab.flow) ||
@@ -201,6 +268,27 @@ export function validateWorkspace(value: unknown): BackupState {
     )
   )
     throw new Error('笔记格式无效。');
+  for (const n of value.notes as Record<string, unknown>[])
+    if (
+      n.versions !== undefined &&
+      (!Array.isArray(n.versions) ||
+        n.versions.length > 20 ||
+        n.versions.some(
+          (v) =>
+            !record(v) ||
+            [
+              'id',
+              'createdAt',
+              'title',
+              'text',
+              'chapter',
+              'reviewQuestion',
+            ].some((k) => typeof v[k] !== 'string') ||
+            !Array.isArray(v.tags) ||
+            v.tags.some((t) => typeof t !== 'string'),
+        ))
+    )
+      throw new Error('笔记历史格式无效。');
   if (
     value.reviewPlans !== undefined &&
     (!Array.isArray(value.reviewPlans) ||
@@ -227,6 +315,23 @@ export function validateWorkspace(value: unknown): BackupState {
     throw new Error('空间设置格式无效。');
   if (value.model !== undefined && typeof value.model !== 'string')
     throw new Error('模型设置格式无效。');
+  if (record(value.preferences)) {
+    const p = value.preferences;
+    if (
+      p.reviewMinutes !== undefined &&
+      ![10, 20, 30, 60, 90].includes(Number(p.reviewMinutes))
+    )
+      throw new Error('复习时间预算无效。');
+    if (
+      p.reviewSnoozes !== undefined &&
+      (!record(p.reviewSnoozes) ||
+        Object.keys(p.reviewSnoozes).length > 20000 ||
+        Object.values(p.reviewSnoozes).some(
+          (v) => typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v),
+        ))
+    )
+      throw new Error('暂缓提醒记录无效。');
+  }
   if (value.noteDraft !== undefined) readNoteDraft(value.noteDraft);
   const safeKeys = [
     'noteDraft',
@@ -270,11 +375,13 @@ export function remapFileIds<T>(value: T, mapping: Map<string, string>): T {
         k,
         k === 'fileId' && typeof v === 'string'
           ? (mapping.get(v) ?? v)
-          : k === 'materialKeys' && Array.isArray(v)
-            ? v.map((id) =>
-                typeof id === 'string' ? (mapping.get(id) ?? id) : id,
-              )
-            : remapFileIds(v, mapping),
+          : k === 'retellingDraft' && record(v) && typeof v.file === 'string'
+            ? { ...v, file: mapping.get(v.file) ?? v.file }
+            : k === 'materialKeys' && Array.isArray(v)
+              ? v.map((id) =>
+                  typeof id === 'string' ? (mapping.get(id) ?? id) : id,
+                )
+              : remapFileIds(v, mapping),
       ]),
     ) as T;
   return value;

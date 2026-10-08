@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-10-08T16:28:26.453Z",
+  "checks": [
+    "one home resume and consistent material count",
+    "search passage location survives reload",
+    "reader opens chat directly and remembers split",
+    "history answer search highlights exact message",
+    "note comparison and restoration keep both contents",
+    "citation review stored with original evidence and claim",
+    "same question deduplicated, snoozed and restored",
+    "practice completes merged due tasks without completing future tasks",
+    "retelling draft and evidence snapshot persist without AI",
+    "encrypted local AI setup and mock feedback; credentials excluded from backup",
+    "desktop and mobile review/retelling layout fits viewport"
+  ],
+  "pageErrors": [],
+  "ai": "Local mock server only; no paid AI or real accuracy measurement",
+  "physicalDevices": false
+}

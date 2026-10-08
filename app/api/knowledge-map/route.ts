@@ -1,6 +1,7 @@
 import { noteFingerprint, parseConceptGraph } from '@/lib/note-graph';
-import { resolveModel, providerOptions } from '@/lib/ai-provider';
+import { aiRuntime } from '@/lib/ai-runtime';
 export async function POST(request: Request) {
+  const ai = await aiRuntime();
   if (
     request.headers.get('origin') &&
     request.headers.get('origin') !== new URL(request.url).origin
@@ -26,7 +27,7 @@ export async function POST(request: Request) {
       { error: '这篇笔记超过 24,000 字符，请先拆分为几篇主题笔记再生成。' },
       { status: 413 },
     );
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = ai.apiKey;
   if (!apiKey)
     return Response.json(
       { error: '尚未连接 AI 服务。关联笔记图谱仍可直接使用。' },
@@ -36,7 +37,7 @@ export async function POST(request: Request) {
     content = body.content;
   try {
     const response = await fetch(
-      `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
+      `${ai.baseUrl.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: {
@@ -46,10 +47,10 @@ export async function POST(request: Request) {
         },
         signal: AbortSignal.timeout(90000),
         body: JSON.stringify({
-          model: resolveModel(
+          model: ai.resolveModel(
             typeof body.model === 'string' ? body.model : undefined,
           ),
-          ...providerOptions(),
+          ...ai.providerOptions(),
           temperature: 0.1,
           max_tokens: 2400,
           messages: [

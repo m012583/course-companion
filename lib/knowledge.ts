@@ -1,3 +1,5 @@
+import type { NoteVersion } from './note-history';
+import { reviewInterval } from './review-schedule';
 import { sourceAnchor } from './source-anchor';
 import type { ConceptGraph, NodePosition } from './note-graph';
 export type Passage = {
@@ -37,6 +39,7 @@ export type Material = {
   deletedAt?: string;
 };
 export type Note = {
+  versions?: NoteVersion[];
   id: string;
   title: string;
   text: string;
@@ -119,7 +122,7 @@ export function selectNotes(
 }
 export function scheduleReview(note: Note, correct: boolean, now = new Date()) {
   const count = correct ? (note.reviewCount ?? 0) + 1 : 0;
-  const days = correct ? [1, 3, 7, 14, 30][Math.min(count - 1, 4)] : 1;
+  const days = correct ? reviewInterval(count) : 1;
   const next = new Date(now);
   next.setDate(next.getDate() + days);
   return {

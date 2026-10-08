@@ -1,4 +1,4 @@
-import { providerOptions, resolveModel } from './ai-provider';
+import { aiRuntime } from '@/lib/ai-runtime';
 const cache = new Map<string, string[]>();
 export async function semanticRewrite(
   question: string,
@@ -6,24 +6,25 @@ export async function semanticRewrite(
   model: string | undefined,
   signal: AbortSignal,
 ) {
-  if (!process.env.OPENAI_API_KEY)
+  const ai = await aiRuntime();
+  if (!ai.apiKey)
     return { rewrites: [], status: '未配置模型，使用本地词项检索' };
-  const key = JSON.stringify([question, course, model]);
+  const key = JSON.stringify([question, course, ai.baseUrl, ai.model]);
   const hit = cache.get(key);
   if (hit) return { rewrites: hit, status: '关键词 + AI 语义改写（缓存）' };
   try {
     const response = await fetch(
-      `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
+      `${ai.baseUrl.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          Authorization: `Bearer ${ai.apiKey}`,
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(12000)]),
         body: JSON.stringify({
-          model: resolveModel(model),
-          ...providerOptions(),
+          model: ai.resolveModel(model),
+          ...ai.providerOptions(),
           temperature: 0,
           max_tokens: 220,
           messages: [

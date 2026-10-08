@@ -1,23 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import ts from 'typescript';
 
-async function moduleUrl(path, replacements = []) {
-  let source = await readFile(new URL(path, import.meta.url), 'utf8');
-  if (source.includes('@/lib/chapter-lesson'))
-    source = source.replace(
-      '@/lib/chapter-lesson',
-      await moduleUrl('../lib/chapter-lesson.ts'),
-    );
-  if (source.includes('@/lib/ai-provider'))
-    source = source.replace(
-      '@/lib/ai-provider',
-      await moduleUrl('../lib/ai-provider.ts'),
-    );
-  for (const [from, to] of replacements) source = source.replace(from, to);
-  return `data:text/javascript;base64,${Buffer.from(ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText).toString('base64')}`;
-}
+import { moduleUrl } from './load-ts.mjs';
+
 const guideUrl = await moduleUrl('../lib/course-guide.ts');
 const {
   readGuideRequest,

@@ -1,0 +1,31 @@
+{
+  "version": "0.5.0",
+  "baseCommit": "79a76e07f6d6b268f0b16124708701c5a0525361",
+  "verifiedAt": "2026-10-08T16:28:26.453Z",
+  "testCount": 84,
+  "testFailures": 0,
+  "exitCodes": {
+    "tests": 0,
+    "typecheck": 0,
+    "lint": 0,
+    "build": 0
+  },
+  "browser": {
+    "existingFlowChecks": 8,
+    "newExperienceChecks": 11,
+    "existingReport": "learning-ui-v1.json",
+    "experienceReport": "experience-ui-v1.json",
+    "pageErrors": [],
+    "viewports": ["1440x960", "390x844"],
+    "mobileSidebarCheckedAfterTransition": true
+  },
+  "configuration": {
+    "encryptedLocalConfigurationTested": true,
+    "actualEncryptionSecretFoundInClientBuild": false,
+    "credentialsExcludedFromLearningBackup": true,
+    "crossCourseCitationOwnershipTested": true
+  },
+  "realAi": "Not configured; tests used a local mock provider and a placeholder credential. No paid calls or real answer-quality measurements.",
+  "physicalDevices": "Not tested; browser viewport emulation only.",
+  "dependencies": "Unchanged from 0.4.0; its outstanding audit findings are not resolved by this release."
+}

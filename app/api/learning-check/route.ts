@@ -1,8 +1,9 @@
 import { readMaterials } from '@/lib/retrieval';
 import { sourcePassagesForChapter } from '@/lib/textbook-calibration';
 import { parseCheck } from '@/lib/learning-check';
-import { resolveModel, providerOptions } from '@/lib/ai-provider';
+import { aiRuntime } from '@/lib/ai-runtime';
 export async function POST(request: Request) {
+  const ai = await aiRuntime();
   if (
     request.headers.get('origin') &&
     request.headers.get('origin') !== new URL(request.url).origin
@@ -34,21 +35,21 @@ export async function POST(request: Request) {
       );
       if (!evidence.length)
         throw new Error('没有找到原文依据，请调整知识点或教材范围。');
-      if (!process.env.OPENAI_API_KEY)
+      if (!ai.apiKey)
         throw new Error('尚未配置 AI 服务。可以先体验原创示例或手动建题。');
       status('正在生成练习草稿');
       const response = await fetch(
-        `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
+        `${ai.baseUrl.replace(/\/$/, '')}/chat/completions`,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+            Authorization: `Bearer ${ai.apiKey}`,
           },
           signal: AbortSignal.any([request.signal, AbortSignal.timeout(90000)]),
           body: JSON.stringify({
-            model: resolveModel(body.model),
-            ...providerOptions(),
+            model: ai.resolveModel(body.model),
+            ...ai.providerOptions(),
             temperature: 0.15,
             max_tokens: 2200,
             messages: [

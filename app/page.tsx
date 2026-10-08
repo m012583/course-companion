@@ -17,7 +17,15 @@ import ReactMarkdown from 'react-markdown';
 import Image from 'next/image';
 import NoteVisuals from '@/components/note-visuals';
 import KnowledgeNetwork from '@/components/knowledge-network';
-import QuickSearch from '@/components/quick-search';
+import QuickSearch from '@/components/search-palette';
+import AiSetup from '@/components/ai-setup';
+import UnifiedReview from '@/components/review-queue';
+import NoteHistory from '@/components/note-history';
+import CitationFeedback from '@/components/citation-feedback';
+import { checkpointNote, restoreNoteVersion } from '@/lib/note-history';
+import { learningQueue, finishDueTasks } from '@/lib/review-queue';
+import { addDays } from '@/lib/review-plans';
+import type { SearchHit } from '@/lib/workspace-search';
 import ReviewPlanner from '@/components/review-planner';
 import StudyLab from '@/components/study-lab';
 import BackupPanel from '@/components/backup-panel';
@@ -26,6 +34,7 @@ import { readEventStream } from '@/lib/event-stream';
 import { cleanCitations } from '@/lib/retrieval';
 import '@/components/study-lab.css';
 import '@/components/learning-flow.css';
+import '@/components/experience.css';
 import CourseRecycleBin, {
   type CourseTrashItem,
 } from '@/components/course-recycle-bin';
@@ -323,7 +332,9 @@ export default function Home() {
   }, []);
 
   const [guideChapterId, setGuideChapterId] = useState('');
-  const [preferences, setPreferences] = useState(DEMO_WORKSPACE.preferences),
+  const [preferences, setPreferences] = useState<Preferences>(
+      DEMO_WORKSPACE.preferences,
+    ),
     [model, setModel] = useState('deepseek-v4-flash');
   const [aiSettings, setAiSettings] = useState<ReturnType<
     typeof publicAiSettings
@@ -383,7 +394,29 @@ export default function Home() {
   const [draftOpen, setDraftOpen] = useState(true);
   const [discardDraft, setDiscardDraft] = useState(false);
   const [saveRetry, setSaveRetry] = useState(0);
-  const [source, setSource] = useState<Evidence | null>(null);
+  const [source, setSourceValue] = useState<Evidence | null>(null);
+  const [sourceClaim, setSourceClaim] = useState('');
+  const [sourceCourseId, setSourceCourseId] = useState('');
+  const [messageFocus, setMessageFocus] = useState<number | null>(null);
+  const [focusReading, setFocusReading] = useState(false);
+  function setSource(
+    value: Evidence | null,
+    claim = '',
+    owner = activeCourseId,
+  ) {
+    setSourceCourseId(owner);
+    setSourceValue(value);
+    setSourceClaim(claim);
+  }
+  function reloadAiSettings() {
+    void fetch('/api/ai-settings')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((raw) => {
+        const value = raw as ReturnType<typeof publicAiSettings> | null;
+        if (value?.models?.length) setAiSettings(value);
+      })
+      .catch(() => setToast('读取 AI 配置失败，请重试。'));
+  }
   const [reviewQueue, setReviewQueue] = useState<string[] | null>(null),
     [reviewIndex, setReviewIndex] = useState(0),
     [reviewAnswer, setReviewAnswer] = useState(''),
@@ -479,6 +512,7 @@ export default function Home() {
       : noteCollection === 'starred'
         ? '我的收藏'
         : '全部笔记';
+  const sourceOwner = allCourses.find((c) => c.id === sourceCourseId);
   const sourceLocation = source
     ? locateSource(
         source,
@@ -498,6 +532,9 @@ export default function Home() {
     preferences,
     model,
     noteDraft: { note: draftNote, origin: draftOrigin },
+  };
+  const updateCourse = (id: string, update: (course: Course) => Course) => {
+    setCourses((current) => current.map((c) => (c.id === id ? update(c) : c)));
   };
   function applyState(state: Workspace) {
     const draft = readNoteDraft(state.noteDraft);
@@ -723,6 +760,24 @@ export default function Home() {
         if (c && courses.some((item) => item.id === c)) setActiveCourseId(c);
         setActiveSessionId(p.get('session') ?? '');
         setSelectedMaterialId(p.get('file') ?? '');
+        setMessageFocus(p.has('message') ? Number(p.get('message')) : null);
+        if (p.has('passage') && c) {
+          const owner = courses.find((x) => x.id === c),
+            material = owner?.materials.find(
+              (m) => materialKey(m) === p.get('file'),
+            );
+          const position = Number(p.get('passage'));
+          if (material && Number.isInteger(position) && position >= 0)
+            updateCourse(c, (x) => ({
+              ...x,
+              reading: {
+                fileId: material.fileId,
+                name: material.name,
+                passage: position,
+                updatedAt: new Date().toISOString(),
+              },
+            }));
+        }
         setSelectedNoteId(p.get('note') ?? '');
         setGuideChapterId(p.get('chapter') ?? '');
         setPracticeQuestion(p.get('question') ?? '');
@@ -789,6 +844,8 @@ export default function Home() {
       collection?: 'all' | 'starred' | 'trash';
       chapter?: string;
       question?: string;
+      passage?: number;
+      message?: number;
     } = {},
   ) {
     setActiveView(view);
@@ -827,13 +884,13 @@ export default function Home() {
     if (opts.note) params.set('note', opts.note);
     if (opts.chapter) params.set('chapter', opts.chapter);
     if (opts.question) params.set('question', opts.question);
+    if (opts.passage !== undefined) params.set('passage', String(opts.passage));
+    if (opts.message !== undefined) params.set('message', String(opts.message));
+    else setMessageFocus(null);
     if (opts.filter) params.set('filter', opts.filter);
     if (opts.collection && opts.collection !== 'all')
       params.set('collection', opts.collection);
     history.pushState(null, '', `#${params}`);
-  }
-  function updateCourse(id: string, update: (course: Course) => Course) {
-    setCourses((current) => current.map((c) => (c.id === id ? update(c) : c)));
   }
   function updateSession(
     courseId: string,
@@ -1740,6 +1797,15 @@ export default function Home() {
   function gradeReview(correct: boolean) {
     if (!reviewNote) return;
     const patch = scheduleReview(reviewNote, correct);
+    setReviewPlans((current) =>
+      finishDueTasks(
+        current,
+        'note',
+        reviewNote.id,
+        noteOwner(reviewNote)?.id ?? '',
+        localDate(),
+      ),
+    );
     setNotes((current) =>
       current.map((n) => (n.id === reviewNote.id ? { ...n, ...patch } : n)),
     );
@@ -1822,14 +1888,19 @@ export default function Home() {
         <ChevronRight size={17} />
       </button>
     ));
-  function evidenceList(items: Evidence[], label = '引用原文') {
+  function evidenceList(
+    items: Evidence[],
+    label = '引用原文',
+    claim = '',
+    owner = activeCourseId,
+  ) {
     return items.length > 0 ? (
       <div className="evidence-list">
         <small>{label} · 点击核对，引用关联不等于结论已验证</small>
         {items.map((item) => (
           <button
             key={`${item.id}-${item.fileId ?? item.name}`}
-            onClick={() => setSource(item)}
+            onClick={() => setSource(item, claim, owner)}
           >
             <FileText size={15} />
             <span>
@@ -1910,11 +1981,153 @@ export default function Home() {
       </details>
     );
   }
+  const todayQueue = learningQueue(
+    courses,
+    notes,
+    visibleReviewPlans,
+    localDate(),
+    preferences.reviewSnoozes,
+  );
+  function openSearchHit(hit: SearchHit) {
+    setShowSearch(false);
+    if (hit.kind === '笔记') {
+      const note = notes.find((n) => n.id === hit.noteId);
+      if (note) openNote(note);
+      return;
+    }
+    if (hit.kind === '教材') {
+      const c = courses.find((c) => c.id === hit.courseId),
+        m = c?.materials.find((m) => materialKey(m) === hit.file);
+      if (m)
+        updateCourse(hit.courseId, (c) => ({
+          ...c,
+          reading: {
+            fileId: m.fileId,
+            name: m.name,
+            passage: hit.passage ?? 0,
+            updatedAt: new Date().toISOString(),
+          },
+        }));
+      go('materials', {
+        course: hit.courseId,
+        file: hit.file,
+        passage: hit.passage,
+      });
+      return;
+    }
+    if (hit.kind === '练习') {
+      go('lab', { course: hit.courseId, question: hit.questionId });
+      return;
+    }
+    if (hit.kind === '回答') {
+      setMessageFocus(hit.message ?? 0);
+      go('study', {
+        course: hit.courseId,
+        session: hit.sessionId,
+        message: hit.message,
+      });
+      return;
+    }
+    go('course', { course: hit.courseId });
+  }
+  function unifiedReview() {
+    return (
+      <UnifiedReview
+        items={todayQueue}
+        minutes={preferences.reviewMinutes ?? 20}
+        onMinutes={(reviewMinutes) =>
+          setPreferences({ ...preferences, reviewMinutes })
+        }
+        onReset={() => setPreferences({ ...preferences, reviewSnoozes: {} })}
+        onSnooze={(item) =>
+          setPreferences({
+            ...preferences,
+            reviewSnoozes: {
+              ...preferences.reviewSnoozes,
+              [item.key]: addDays(localDate(), 1),
+            },
+          })
+        }
+        onDone={(item) =>
+          setReviewPlans((current) =>
+            current.map((p) => ({
+              ...p,
+              tasks: p.tasks.map((t) =>
+                item.tasks.some((r) => r.planId === p.id && r.taskId === t.id)
+                  ? { ...t, done: true }
+                  : t,
+              ),
+            })),
+          )
+        }
+        onOpen={(item) => {
+          if (item.noteId) startReview([item.noteId]);
+          else if (item.questionId)
+            go('lab', { course: item.courseId, question: item.questionId });
+          else {
+            document
+              .getElementById('review-plans-manager')
+              ?.scrollIntoView({ block: 'start' });
+            setToast(`请在计划中查看：${item.title}`);
+          }
+        }}
+      />
+    );
+  }
+  useEffect(() => {
+    if (messageFocus !== null && activeView === 'study')
+      requestAnimationFrame(() =>
+        document
+          .querySelector(`[data-message-index="${messageFocus}"]`)
+          ?.scrollIntoView({ block: 'center' }),
+      );
+  }, [messageFocus, activeSessionId, activeView]);
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      const saved = localStorage.getItem(
+        `course-reader-split:${activeCourseId}`,
+      );
+      queueMicrotask(() => setReadingChat(saved === 'true'));
+    } catch {
+      /* optional display preference */
+    }
+  }, [hydrated, activeCourseId]);
+  function toggleReadingChat(open: boolean) {
+    setReadingChat(open);
+    setReadingTab(open ? 'chat' : 'read');
+    try {
+      localStorage.setItem(
+        `course-reader-split:${activeCourseId}`,
+        String(open),
+      );
+    } catch {
+      /* optional display preference */
+    }
+  }
   function homeView() {
     const recent = courses
       .flatMap((c) => c.sessions.map((session) => ({ ...session, course: c })))
       .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
     const latest = recent[0];
+    const readingCourse = courses
+      .filter(
+        (c) =>
+          c.reading &&
+          c.materials.some(
+            (m) =>
+              !m.deletedAt &&
+              (c.reading?.fileId
+                ? m.fileId === c.reading.fileId
+                : m.name === c.reading?.name),
+          ),
+      )
+      .sort((a, b) =>
+        b.reading!.updatedAt.localeCompare(a.reading!.updatedAt),
+      )[0];
+    const resumeReading =
+      !!readingCourse &&
+      (!latest || readingCourse.reading!.updatedAt >= latest.updatedAt);
     const todayTasks = visibleReviewPlans
       .filter((plan) => !plan.deletedAt)
       .flatMap((plan) => plan.tasks.map((task) => ({ task, plan })))
@@ -1963,55 +2176,63 @@ export default function Home() {
           </span>
           <span className="home-overview-tip">按自己的节奏，一步一步来</span>
         </div>
-        <LearningNext
-          courses={courses}
-          onRead={(c) =>
-            go('materials', {
-              course: c.id,
-              file: c.reading?.fileId ?? c.reading?.name,
-            })
-          }
-          onPractice={(c, question) => go('lab', { course: c.id, question })}
-        />
         <section className="study-focus">
           <div className="resume">
             <span className="eyebrow">
               <span className="course-dot" />
-              {latest?.course.name ?? '开始学习'}
+              {(resumeReading ? readingCourse.name : latest?.course.name) ??
+                '开始学习'}
             </span>
-            <h2>{resumeTitle ? `继续：${resumeTitle}` : '带着一个问题开始'}</h2>
+            <h2>
+              {resumeReading
+                ? `继续阅读：${readingCourse.reading!.name}`
+                : resumeTitle
+                  ? `继续：${resumeTitle}`
+                  : '带着一个问题开始'}
+            </h2>
             <p>
-              {latest
-                ? `最近学习于 ${timeLabel(latest.updatedAt)}`
-                : '选一门课程，上传资料，记下你的第一个问题。'}
+              {resumeReading
+                ? `上次读到第 ${readingCourse.reading!.passage + 1} 段`
+                : latest
+                  ? `最近学习于 ${timeLabel(latest.updatedAt)}`
+                  : '选一门课程，上传资料，记下你的第一个问题。'}
             </p>
             <button
               className="primary"
               onClick={() =>
-                latest
-                  ? go('study', {
-                      course: latest.course.id,
-                      session: latest.id,
+                resumeReading
+                  ? go('materials', {
+                      course: readingCourse.id,
+                      file:
+                        readingCourse.reading!.fileId ??
+                        readingCourse.reading!.name,
                     })
-                  : courses.length
-                    ? go('materials', { course: activeCourse.id })
-                    : setNewCourseOpen(true)
+                  : latest
+                    ? go('study', {
+                        course: latest.course.id,
+                        session: latest.id,
+                      })
+                    : courses.length
+                      ? go('materials', { course: activeCourse.id })
+                      : setNewCourseOpen(true)
               }
             >
-              {latest
-                ? '继续学习'
-                : courses.length
-                  ? '上传第一份资料'
-                  : '添加第一门课程'}
+              {resumeReading
+                ? '继续阅读'
+                : latest
+                  ? '继续学习'
+                  : courses.length
+                    ? '上传第一份资料'
+                    : '添加第一门课程'}
               <ChevronRight size={16} />
             </button>
           </div>
           <div className="review-callout">
             <h2>
               <CalendarDays size={21} />
-              {dueNotes.length
-                ? `${dueNotes.length} 条待复习`
-                : '今天没有到期笔记'}
+              {todayQueue.length
+                ? `${todayQueue.length} 项到期复习`
+                : '今天没有到期任务'}
             </h2>
             <p>
               {dueNotes.length
@@ -2020,9 +2241,12 @@ export default function Home() {
             </p>
             <button
               className="text-button"
-              onClick={() => (dueNotes.length ? startReview() : go('review'))}
+              onClick={() => {
+                setReviewQueue(null);
+                go('review');
+              }}
             >
-              {dueNotes.length ? '开始回忆' : '查看复习'}
+              查看今日队列
               <ChevronRight size={16} />
             </button>
           </div>
@@ -2061,7 +2285,7 @@ export default function Home() {
               </div>
               <h3>{course.name}</h3>
               <p>
-                {course.materials.filter((m) => m.fileId).length} 份资料 ·{' '}
+                {course.materials.filter((m) => !m.deletedAt).length} 份资料 ·{' '}
                 {
                   notes.filter(
                     (n) =>
@@ -2171,7 +2395,7 @@ export default function Home() {
             {todayTasks.slice(0, 3).map(({ task, plan }) => (
               <button
                 className="agenda-task"
-                key={task.id}
+                key={`${plan.id}:${task.id}`}
                 onClick={() => {
                   setReviewQueue(null);
                   if (task.questionId)
@@ -2644,8 +2868,7 @@ export default function Home() {
                 setToast('请等待当前回答完成，或先停止生成。');
                 return;
               }
-              setReadingChat(true);
-              setReadingTab('chat');
+              toggleReadingChat(true);
               setActiveSessionId('');
               setScope('custom');
               setSelectedFiles([materialChoiceKey(currentMaterial)]);
@@ -2856,7 +3079,11 @@ export default function Home() {
             {messages.map(
               (message, index) =>
                 !message.deletedAt && (
-                  <article className={`message ${message.role}`} key={index}>
+                  <article
+                    data-message-index={index}
+                    className={`message ${message.role} ${messageFocus === index ? 'search-highlight' : ''}`}
+                    key={index}
+                  >
                     <div className="message-label">
                       {message.role === 'assistant'
                         ? '课伴'
@@ -2912,7 +3139,11 @@ export default function Home() {
                             {message.scope.passages} 段原文。
                           </small>
                         )}
-                        {evidenceList(message.evidence ?? [])}
+                        {evidenceList(
+                          message.evidence ?? [],
+                          '引用原文',
+                          message.text,
+                        )}
                         {!message.evidence?.length && message.scope && (
                           <p className="muted small">
                             {message.scope.imageCount
@@ -3460,7 +3691,19 @@ export default function Home() {
                       >
                         <Star size={17} />
                       </button>
-                      <button onClick={() => setEditingNote(!editingNote)}>
+                      <button
+                        onClick={() => {
+                          if (!editingNote)
+                            setNotes((current) =>
+                              current.map((n) =>
+                                n.id === selectedNote.id
+                                  ? checkpointNote(n)
+                                  : n,
+                              ),
+                            );
+                          setEditingNote(!editingNote);
+                        }}
+                      >
                         {editingNote ? '完成编辑' : '编辑笔记'}
                       </button>
                       <button
@@ -3521,6 +3764,10 @@ export default function Home() {
                           onChange={(e) => editNote({ text: e.target.value })}
                         />
                       </label>
+                      <details className="editor-preview" open>
+                        <summary>正文预览</summary>
+                        <Markdown text={selectedNote.text} />
+                      </details>
                       <label>
                         关联笔记
                         <select
@@ -3583,6 +3830,22 @@ export default function Home() {
                       />
                     </>
                   )}
+                  <NoteHistory
+                    key={selectedNote.id}
+                    note={selectedNote}
+                    disabled={!!syncError || syncStatus === 'offline'}
+                    onRestore={(id) => {
+                      setNotes((current) =>
+                        current.map((n) =>
+                          n.id === selectedNote.id
+                            ? restoreNoteVersion(n, id)
+                            : n,
+                        ),
+                      );
+                      setEditingNote(false);
+                      setToast('已恢复所选版本，恢复前内容也已保存。');
+                    }}
+                  />
                   <details className="note-review-settings">
                     <summary>复习与掌握情况</summary>
                     <button
@@ -3622,7 +3885,12 @@ export default function Home() {
                       </small>
                     </div>
                   </details>
-                  {evidenceList(selectedNote.sources ?? [])}
+                  {evidenceList(
+                    selectedNote.sources ?? [],
+                    '引用原文',
+                    selectedNote.text,
+                    noteOwner(selectedNote)?.id,
+                  )}
                   {selectedNote.sessionId && (
                     <button
                       className="text-button"
@@ -3709,30 +3977,37 @@ export default function Home() {
   function reviewView() {
     if (reviewQueue === null)
       return (
-        <ReviewPlanner
-          courses={courses}
-          notes={notes}
-          plans={visibleReviewPlans}
-          model={model}
-          dueCount={dueNotes.length}
-          onChange={(next) =>
-            setReviewPlans((current) => [
-              ...current.filter(
-                (plan) =>
-                  !courses.some((course) => course.id === plan.courseId),
-              ),
-              ...next,
-            ])
-          }
-          onPractice={() =>
-            startReview(
-              (dueNotes.length ? dueNotes : notes).map((note) => note.id),
-            )
-          }
-          onOpenNote={openNote}
-          onOpenQuestion={(course, question) => go('lab', { course, question })}
-          onAddCourse={() => setNewCourseOpen(true)}
-        />
+        <>
+          {unifiedReview()}
+          <div id="review-plans-manager">
+            <ReviewPlanner
+              courses={courses}
+              notes={notes}
+              plans={visibleReviewPlans}
+              model={model}
+              dueCount={dueNotes.length}
+              onChange={(next) =>
+                setReviewPlans((current) => [
+                  ...current.filter(
+                    (plan) =>
+                      !courses.some((course) => course.id === plan.courseId),
+                  ),
+                  ...next,
+                ])
+              }
+              onPractice={() =>
+                startReview(
+                  (dueNotes.length ? dueNotes : notes).map((note) => note.id),
+                )
+              }
+              onOpenNote={openNote}
+              onOpenQuestion={(course, question) =>
+                go('lab', { course, question })
+              }
+              onAddCourse={() => setNewCourseOpen(true)}
+            />
+          </div>
+        </>
       );
     return (
       <div className="review-page">
@@ -3792,7 +4067,12 @@ export default function Home() {
                 <div className="review-solution">
                   <h3>笔记解析</h3>
                   <Markdown text={reviewNote.text} />
-                  {evidenceList(reviewNote.sources ?? [])}
+                  {evidenceList(
+                    reviewNote.sources ?? [],
+                    '引用原文',
+                    reviewNote.text,
+                    noteOwner(reviewNote)?.id,
+                  )}
                 </div>
                 <p className="muted">对照笔记自行判断；这不是 AI 自动评分。</p>
                 <div className="actions">
@@ -4039,7 +4319,7 @@ export default function Home() {
               aria-label="全局搜索（Ctrl K）"
             >
               <Search size={16} />
-              <span>搜索笔记与课程</span>
+              <span>搜索学习内容</span>
               <kbd>Ctrl K</kbd>
             </button>
             <span>{preferences.userName}</span>
@@ -4109,6 +4389,12 @@ export default function Home() {
               </button>
             </aside>
           )}
+          {inCourse && aiSettings && !aiSettings.configured && (
+            <div className="ai-connection-hint">
+              <span>AI 尚未连接，阅读、笔记和手动练习仍可使用。</span>
+              <button onClick={() => setShowSettings(true)}>连接 AI</button>
+            </div>
+          )}
           {inCourse && courses.length > 0 && (
             <>
               <div className="course-heading">
@@ -4176,10 +4462,34 @@ export default function Home() {
               course={activeCourse}
               model={model}
               questionId={practiceQuestion}
+              aiReady={!!aiSettings?.configured}
+              onSetup={() => setShowSettings(true)}
               disabled={!!syncError || syncStatus === 'offline'}
-              onChange={(studyLab) =>
-                updateCourse(activeCourse.id, (c) => ({ ...c, studyLab }))
-              }
+              onChange={(studyLab) => {
+                const previous = new Set(
+                  activeCourse.studyLab?.practice?.attempts.map((a) => a.id) ??
+                    [],
+                );
+                const added =
+                  studyLab.practice?.attempts.filter(
+                    (a) => !previous.has(a.id),
+                  ) ?? [];
+                if (added.length)
+                  setReviewPlans((current) =>
+                    added.reduce(
+                      (plans, a) =>
+                        finishDueTasks(
+                          plans,
+                          'question',
+                          a.questionId,
+                          activeCourse.id,
+                          localDate(),
+                        ),
+                      current,
+                    ),
+                  );
+                updateCourse(activeCourse.id, (c) => ({ ...c, studyLab }));
+              }}
               onSource={setSource}
               onRead={() => go('materials')}
               onExplain={(_term, prompt) => {
@@ -4200,20 +4510,26 @@ export default function Home() {
             />
           ) : activeView === 'materials' ? (
             <div
-              className={`reading-workspace ${readingChat ? 'with-chat' : ''}`}
+              className={`reading-workspace ${readingChat ? 'with-chat' : ''} ${focusReading ? 'focus-reading' : ''}`}
               data-mobile-pane={readingTab}
             >
               <div className="reading-switch actions">
                 <button onClick={() => setReadingTab('read')}>教材</button>
+                <button onClick={() => toggleReadingChat(true)}>
+                  打开问答
+                </button>
                 <button
-                  disabled={!readingChat}
-                  onClick={() => setReadingTab('chat')}
+                  aria-pressed={focusReading}
+                  onClick={() => setFocusReading(!focusReading)}
                 >
-                  问答
+                  {focusReading ? '退出专注阅读' : '专注阅读'}
                 </button>
-                <button onClick={() => setLabTool('calibration')}>
-                  教材校准
-                </button>
+                <details className="reader-menu">
+                  <summary>阅读工具</summary>
+                  <button onClick={() => setLabTool('calibration')}>
+                    教材校准
+                  </button>
+                </details>
               </div>
               <div className="reading-main">{materialsView()}</div>
               {readingChat && (
@@ -4221,8 +4537,7 @@ export default function Home() {
                   <div className="actions">
                     <button
                       onClick={() => {
-                        setReadingChat(false);
-                        setReadingTab('read');
+                        toggleReadingChat(false);
                       }}
                     >
                       收起问答
@@ -4268,14 +4583,7 @@ export default function Home() {
             notes={notes}
             courses={courses}
             onClose={() => setShowSearch(false)}
-            onNote={(note) => {
-              setShowSearch(false);
-              openNote(note);
-            }}
-            onCourse={(id) => {
-              setShowSearch(false);
-              go('course', { course: id });
-            }}
+            onOpen={openSearchHit}
             onNew={() => {
               setShowSearch(false);
               startNote();
@@ -4587,6 +4895,26 @@ export default function Home() {
             </button>
           </div>
           <p className="muted">{source.section} · 提取原文，供人工核对</p>
+          <CitationFeedback
+            key={`${source.name}:${source.quote}:${sourceClaim}`}
+            evidence={source}
+            claim={sourceClaim}
+            reviews={sourceOwner?.citationReviews ?? []}
+            disabled={
+              !!syncError ||
+              syncStatus === 'offline' ||
+              !sourceOwner ||
+              !!sourceOwner.deletedAt ||
+              (sourceOwner.citationReviews?.length ?? 0) >= 1000
+            }
+            onSave={(review) => {
+              updateCourse(sourceCourseId, (c) => ({
+                ...c,
+                citationReviews: [...(c.citationReviews ?? []), review],
+              }));
+              setToast('引用核对记录已保存。');
+            }}
+          />
           {sourceLocation?.status === 'missing' && (
             <p className="notice">
               当前资料中未找到唯一对应来源，以下保留历史引用，不能视为已核实的当前原文。
@@ -4701,6 +5029,7 @@ export default function Home() {
             </button>
           </div>
           <div className="form-stack">
+            <AiSetup onChanged={reloadAiSettings} />
             <label>
               空间名称
               <input

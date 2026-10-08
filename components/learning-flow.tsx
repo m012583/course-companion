@@ -18,6 +18,7 @@ import type { LearningCheck } from '@/lib/learning-check';
 import type { Evidence } from '@/lib/knowledge';
 import type { ReviewPlan } from '@/lib/review-plans';
 import PracticePanel from './practice-panel';
+import RetellingPanel from './retelling-panel';
 
 export default function LearningFlow({
   course,
@@ -29,6 +30,8 @@ export default function LearningFlow({
   onPlan,
   onExplain,
   onRead,
+  aiReady,
+  onSetup,
 }: {
   course: LearningCourse;
   model: string;
@@ -39,8 +42,10 @@ export default function LearningFlow({
   onPlan: (plan: ReviewPlan, state: StudyLabState) => void;
   onExplain: (term: string, prompt: string) => void;
   onRead: () => void;
+  aiReady: boolean;
+  onSetup: () => void;
 }) {
-  const [tab, setTab] = useState<'quick' | 'bank' | 'wrong'>(
+  const [tab, setTab] = useState<'quick' | 'bank' | 'wrong' | 'retelling'>(
     questionId ? 'bank' : 'quick',
   );
   const [chapterId, setChapterId] = useState(
@@ -176,6 +181,7 @@ export default function LearningFlow({
             ['quick', '快速自测'],
             ['bank', '题库'],
             ['wrong', '错题'],
+            ['retelling', '复述练习'],
           ] as const
         ).map(([id, label]) => (
           <button
@@ -187,6 +193,16 @@ export default function LearningFlow({
           </button>
         ))}
       </nav>
+      {tab === 'retelling' && (
+        <RetellingPanel
+          course={course}
+          onChange={onChange}
+          onSource={onSource}
+          disabled={disabled}
+          aiReady={aiReady}
+          onSetup={onSetup}
+        />
+      )}
       {tab === 'quick' && (
         <>
           <ol className="flow-steps" aria-label="学习步骤">
@@ -262,10 +278,22 @@ export default function LearningFlow({
             <div className="actions">
               <button
                 className="primary"
-                disabled={disabled || busy || !evidence.length || !terms.length}
+                disabled={
+                  disabled ||
+                  !aiReady ||
+                  busy ||
+                  !evidence.length ||
+                  !terms.length
+                }
                 onClick={() => void generate()}
               >
-                {busy ? '生成中…' : error ? '重试生成练习' : '生成练习草稿'}
+                {!aiReady
+                  ? '连接 AI 后生成'
+                  : busy
+                    ? '生成中…'
+                    : error
+                      ? '重试生成练习'
+                      : '生成练习草稿'}
               </button>
               {busy && (
                 <button
@@ -302,7 +330,7 @@ export default function LearningFlow({
           </details>
         </>
       )}
-      {(tab !== 'quick' || !!group.length) && (
+      {tab !== 'retelling' && (tab !== 'quick' || !!group.length) && (
         <PracticePanel
           key={`${tab}-${tab === 'quick' ? focusId : ''}-${questionId ?? ''}`}
           course={course}

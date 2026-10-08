@@ -6,11 +6,7 @@ import {
   readLearningContext,
   learningContextPrompt,
 } from '@/lib/chapter-lesson';
-import {
-  resolveModel,
-  providerOptions,
-  supportsImages,
-} from '@/lib/ai-provider';
+import { aiRuntime } from '@/lib/ai-runtime';
 import {
   readChatImages,
   imageMessages,
@@ -28,6 +24,7 @@ async function respond(
   )
     return new Response('Forbidden', { status: 403 });
   try {
+    const ai = await aiRuntime();
     const body = (await request.json().catch(() => null)) as {
       question?: unknown;
       contexts?: unknown;
@@ -129,7 +126,7 @@ async function respond(
       rewrites: rewrite.rewrites,
       evidence,
     });
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = ai.apiKey;
     if (!apiKey)
       return Response.json(
         {
@@ -138,7 +135,7 @@ async function respond(
         },
         { status: 503 },
       );
-    const model = resolveModel(
+    const model = ai.resolveModel(
       typeof body.model === 'string' ? body.model : undefined,
     );
     let turns;
@@ -148,7 +145,7 @@ async function respond(
         { role: 'user', content: question, images },
       ];
       const hasImages = historyWithCurrent.some((turn) => turn.images?.length);
-      if (hasImages && !supportsImages(model))
+      if (hasImages && !ai.supportsImages(model))
         return Response.json(
           {
             error:
@@ -178,7 +175,7 @@ async function respond(
       retrieval: rewrite.status,
     });
     const response = await fetch(
-      `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
+      `${ai.baseUrl.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: {
@@ -189,7 +186,7 @@ async function respond(
         signal: AbortSignal.any([signal, AbortSignal.timeout(90000)]),
         body: JSON.stringify({
           model,
-          ...providerOptions(),
+          ...ai.providerOptions(),
           max_tokens: 6000,
           temperature: 0.2,
           ...(emit ? { stream: true } : {}),

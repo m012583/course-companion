@@ -10,6 +10,8 @@ import {
 import type { CalibrationConfig } from './textbook-calibration';
 
 export type StudyLabState = {
+  retellings?: import('./learning-feedback').Retelling[];
+  retellingDraft?: { file: string; passage: number; answer: string };
   calibration?: CalibrationConfig;
   checks?: LearningCheck[];
   practice?: PracticeState;
@@ -59,7 +61,7 @@ export function practiceAdvice(attempt: PracticeAttempt): string {
     概念不清: '先回看教材中的定义和适用条件，再用自己的话解释后重练。',
     计算错误: '列出计算步骤，逐步检查符号、单位或矩阵维度，再做同类题。',
     审题失误: '圈出题目条件，说明每个条件如何影响答案，再重练。',
-    记忆不牢: '先合上资料回忆关键结论，再对照原文，并安排两天后复习。',
+    记忆不牢: '先合上资料回忆关键结论，再对照原文，并安排明天复习。',
   };
   return (
     advice[attempt.reason ?? ''] ??

@@ -701,7 +701,7 @@ export default function ReviewPlanner({
                 {daily.map(({ task, plan }) => (
                   <article
                     className={`plan-task ${task.done ? 'is-done' : ''}`}
-                    key={task.id}
+                    key={`${plan.id}:${task.id}`}
                   >
                     <div className="plan-task-top">
                       <span className="task-course">

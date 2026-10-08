@@ -564,7 +564,7 @@ export default function PracticePanel({
                     disabled={disabled || !!last.planId}
                     onClick={() =>
                       setPreview({
-                        plan: planFromAttempt(last, course),
+                        plan: planFromAttempt(last, course, state.attempts),
                         attemptId: last.id,
                       })
                     }

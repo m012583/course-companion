@@ -94,10 +94,10 @@ test('review advice follows recorded errors, and repeat requests keep the same p
   assert.match(practiceAdvice(wrong), /计算步骤/);
   const plan = planFromAttempt(wrong, c);
   assert.equal(validatePlan(plan), '');
-  assert.equal(plan.endDate, addDays(plan.startDate, 2));
+  assert.equal(plan.endDate, addDays(plan.startDate, 1));
   assert.equal(plan.id, planFromAttempt(wrong, c).id);
   const right = planFromAttempt(answerQuestion(q, q.correct), c);
-  assert.equal(right.endDate, addDays(right.startDate, 4));
+  assert.equal(right.endDate, addDays(right.startDate, 1));
 });
 
 test('targeted generation accepts one term but still requires two complete evidence-linked questions', () => {

@@ -34,6 +34,7 @@ export type Session = {
   learningContext?: LearningContext;
 };
 export type Course = {
+  citationReviews?: import('./learning-feedback').CitationReview[];
   reading?: ReadingPosition;
   studyLab?: StudyLabState;
   id: string;
@@ -61,6 +62,8 @@ export type ViewId =
   | 'graph'
   | 'review';
 export type Preferences = {
+  reviewMinutes?: number;
+  reviewSnoozes?: Record<string, string>;
   brandName: string;
   userName: string;
   semester: string;

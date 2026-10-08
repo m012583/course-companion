@@ -1,3 +1,4 @@
+import { reviewInterval } from './review-schedule';
 import type { Evidence } from './knowledge';
 import { localDate } from './knowledge';
 import { addDays, type ReviewPlan } from './review-plans';
@@ -212,7 +213,18 @@ export function weakTerms(state: PracticeState) {
 export function planFromAttempt(
   a: PracticeAttempt,
   course: { id: string; name: string },
+  attempts: PracticeAttempt[] = [],
 ): ReviewPlan {
+  const history = [
+    ...attempts.filter((x) => x.questionId === a.questionId && x.id !== a.id),
+    a,
+  ];
+  let successes = 0;
+  for (const row of history.toReversed()) {
+    if (!row.correct) break;
+    successes++;
+  }
+  const days = a.correct ? reviewInterval(successes) : 1;
   const now = new Date().toISOString(),
     date = localDate();
   return {
@@ -221,12 +233,12 @@ export function planFromAttempt(
     title: `${course.name} · ${a.question.term}`,
     goal: `依据作答 ${a.id}：${a.question.prompt}`,
     startDate: date,
-    endDate: addDays(date, a.correct ? 4 : 2),
+    endDate: addDays(date, days),
     dailyMinutes: 20,
     source: 'manual',
     createdAt: now,
     updatedAt: now,
-    tasks: [0, a.correct ? 4 : 2].map((day, i) => ({
+    tasks: [0, days].map((day, i) => ({
       id: `${a.id}-${i}`,
       title: `${i ? '重做并解释' : '回看原文'}：${a.question.prompt}`.slice(
         0,

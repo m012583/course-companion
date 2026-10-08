@@ -3,7 +3,7 @@ import {
   parseLesson,
   readLessonRequest,
 } from '@/lib/chapter-lesson';
-import { providerOptions, resolveModel } from '@/lib/ai-provider';
+import { aiRuntime } from '@/lib/ai-runtime';
 import { readMaterials, cleanCitations } from '@/lib/retrieval';
 import {
   sourcePassagesForChapter,
@@ -11,6 +11,7 @@ import {
 } from '@/lib/textbook-calibration';
 
 export async function POST(request: Request) {
+  const ai = await aiRuntime();
   if (
     request.headers.get('origin') &&
     request.headers.get('origin') !== new URL(request.url).origin
@@ -46,7 +47,7 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  if (!process.env.OPENAI_API_KEY)
+  if (!ai.apiKey)
     return Response.json(
       { error: '尚未配置 AI 服务，已保存的导览仍可阅读。' },
       { status: 503 },
@@ -69,17 +70,17 @@ export async function POST(request: Request) {
       });
     }
     const response = await fetch(
-      `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
+      `${ai.baseUrl.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          Authorization: `Bearer ${ai.apiKey}`,
         },
         signal: AbortSignal.any([request.signal, AbortSignal.timeout(90000)]),
         body: JSON.stringify({
-          model: resolveModel(input.model),
-          ...providerOptions(),
+          model: ai.resolveModel(input.model),
+          ...ai.providerOptions(),
           temperature: 0.25,
           max_tokens: 5000,
           messages: [

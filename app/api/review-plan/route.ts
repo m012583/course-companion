@@ -1,7 +1,8 @@
 import { parsePlanDraft, readPlanRequest } from '@/lib/review-plans';
-import { resolveModel, providerOptions } from '@/lib/ai-provider';
+import { aiRuntime } from '@/lib/ai-runtime';
 
 export async function POST(request: Request) {
+  const ai = await aiRuntime();
   if (
     request.headers.get('origin') &&
     request.headers.get('origin') !== new URL(request.url).origin
@@ -29,25 +30,25 @@ export async function POST(request: Request) {
       { status: 400 },
     );
   }
-  if (!process.env.OPENAI_API_KEY)
+  if (!ai.apiKey)
     return Response.json(
       { error: '尚未配置 AI 服务。你仍然可以手动添加安排并保存计划。' },
       { status: 503 },
     );
   try {
     const response = await fetch(
-      `${(process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1').replace(/\/$/, '')}/chat/completions`,
+      `${ai.baseUrl.replace(/\/$/, '')}/chat/completions`,
       {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          Authorization: `Bearer ${ai.apiKey}`,
           'User-Agent': 'course-knowledge-base/0.3',
         },
         signal: AbortSignal.any([request.signal, AbortSignal.timeout(90000)]),
         body: JSON.stringify({
-          model: resolveModel(settings.model),
-          ...providerOptions(),
+          model: ai.resolveModel(settings.model),
+          ...ai.providerOptions(),
           temperature: 0.3,
           max_tokens: 4000,
           messages: [

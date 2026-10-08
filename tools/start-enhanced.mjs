@@ -1,12 +1,13 @@
 import {
   copyFileSync,
+  appendFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   writeFileSync,
 } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { resolve, dirname } from 'node:path';
@@ -127,6 +128,12 @@ const assets = spawnSync(process.execPath, ['tools/prepare-ocr.mjs'], {
 if (assets.status !== 0) process.exit(1);
 if (!existsSync('.env.local') && existsSync('.env.example'))
   copyFileSync('.env.example', '.env.local');
+// Separate encryption secret stays in the ignored local environment, never in backups.
+if (!/^COURSE_KB_AI_SECRET=.+$/m.test(readFileSync('.env.local', 'utf8')))
+  appendFileSync(
+    '.env.local',
+    `\nCOURSE_KB_AI_SECRET=${randomBytes(32).toString('hex')}\n`,
+  );
 const server = spawn(
   process.execPath,
   [
