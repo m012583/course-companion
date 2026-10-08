@@ -44,3 +44,6 @@ next-env.d.ts
 # Commit only the blank environment template.
 !.env.example
 *.tsbuildinfo
+
+# Legacy verification outputs may contain local learning data.
+/test-results/

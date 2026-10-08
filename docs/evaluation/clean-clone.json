@@ -1,0 +1,14 @@
+{
+  "verifiedDate": "2026-10-08",
+  "testedCommit": "a18dc671e5643292c41a38fa15893614d3da6a73",
+  "cleanGitClone": true,
+  "npmCi": 0,
+  "tests": {
+    "passed": 71,
+    "failed": 0
+  },
+  "typecheck": 0,
+  "repositoryLint": 0,
+  "productionBuild": 0,
+  "scope": "Windows 上从最终 Git 提交重新克隆并安装，不依赖原开发目录的未提交文件。"
+}
