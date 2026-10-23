@@ -181,7 +181,7 @@ async function respond(
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
-          'User-Agent': 'kezhiyu/0.5.1',
+          'User-Agent': 'course-knowledge-base/0.2',
         },
         signal: AbortSignal.any([signal, AbortSignal.timeout(90000)]),
         body: JSON.stringify({

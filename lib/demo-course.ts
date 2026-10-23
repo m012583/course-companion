@@ -1,4 +1,3 @@
-import { BRAND_NAME } from './branding';
 import type { CourseGuide } from './course-guide';
 import { lessonRequest, lessonSourceKey } from './chapter-lesson';
 import type { Material, Note } from './knowledge';
@@ -198,7 +197,7 @@ export function demoWorkspace() {
     sessionId: '',
     activeView: 'home' as const,
     preferences: {
-      brandName: BRAND_NAME,
+      brandName: '课伴·研学版',
       userName: '同学',
       semester: '独立增强版本',
     },

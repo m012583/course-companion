@@ -32,9 +32,9 @@ git fsck --full
 完整离线备份：
 
 ```bash
-git bundle create kezhiyu-history.bundle --all
-git bundle verify kezhiyu-history.bundle
-git clone kezhiyu-history.bundle kezhiyu-restored
+git bundle create course-companion-history.bundle --all
+git bundle verify course-companion-history.bundle
+git clone course-companion-history.bundle course-companion-restored
 ```
 
 GitHub 为 Public 时评审可直接查看；若将来改为私有，应另行提供评审访问权限。
@@ -47,7 +47,3 @@ GitHub 为 Public 时评审可直接查看；若将来改为私有，应另行�
 ## 0.5 更新
 
 从 `79a76e0` 建立 `update/0.5-learning-experience` 分支，完成查找、复习队列、阅读布局、本机 AI 配置、复述核对和笔记历史。旧的 21 条真实提交继续保留。更新前保存完整 Git bundle 和学习数据备份；通过验证后按实际完成内容提交并快进发布，不改写旧提交。
-
-## 2026-10-21 产品更名
-
-产品更名为“课知屿”，GitHub 仓库改为 `m012583/kezhiyu`。本次通过原仓库直接更名并新增提交接续开发，不创建替代仓库、不重写历史。上文提及的旧名称及提交哈希保留用于追溯来源。

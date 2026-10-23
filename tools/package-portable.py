@@ -6,7 +6,7 @@ import json
 
 root = Path(__file__).resolve().parent.parent
 folders = ['app', 'components', 'hooks', 'lib', 'types', 'public', 'db', 'migrations', 'docs', 'tests', 'tools', '.openai']
-names = ['.env.example', '.gitignore', '.gitattributes', '.oxfmtrc.json', '.oxlintrc.json', 'components.json', 'next-env.d.ts', 'next.config.ts', 'package.json', 'package-lock.json', 'README.md', 'README-PORTABLE.md', 'start.cmd', '启动课知屿.cmd', 'start.sh', 'tsconfig.json', 'vite.config.ts', 'output/pdf/course-companion-0.4-technical.pdf']
+names = ['.env.example', '.gitignore', '.gitattributes', '.oxfmtrc.json', '.oxlintrc.json', 'components.json', 'next-env.d.ts', 'next.config.ts', 'package.json', 'package-lock.json', 'README.md', 'README-PORTABLE.md', 'start.cmd', 'start.sh', 'tsconfig.json', 'vite.config.ts', 'output/pdf/course-companion-0.4-technical.pdf']
 excluded = {'node_modules', '.git', '.wrangler', 'work', 'dist', '.vinext', '.next', '__pycache__', 'outputs', 'ocr'}
 files = [root / name for name in names if (root / name).is_file()]
 for folder in folders:
@@ -17,7 +17,7 @@ output_dir = root / 'outputs'
 output_dir.mkdir(exist_ok=True)
 from datetime import date
 version = json.loads((root / 'package.json').read_text(encoding='utf-8'))['version']
-output = output_dir / f'课知屿-{version}-{date.today():%Y%m%d}.zip'
+output = output_dir / f'课伴-研学增强版-{version}-{date.today():%Y%m%d}.zip'
 manifest = {}
 with ZipFile(output, 'w', ZIP_DEFLATED, compresslevel=6) as archive:
     for path in sorted(set(files)):
@@ -27,9 +27,9 @@ with ZipFile(output, 'w', ZIP_DEFLATED, compresslevel=6) as archive:
         import re
         if path.suffix in {'.ts', '.tsx', '.js', '.mjs', '.json', '.md', '.txt'} and re.search(rb'\bsk-[a-zA-Z0-9_-]{24,}', data):
             raise RuntimeError(f'Possible credential in {relative}; no distributable is ready.')
-        archive.writestr('课知屿/' + relative, data)
+        archive.writestr('课伴研学增强版/' + relative, data)
         manifest[relative] = hashlib.sha256(data).hexdigest()
-    archive.writestr('课知屿/package-manifest.json', json.dumps(manifest, ensure_ascii=False, indent=2))
+    archive.writestr('课伴研学增强版/package-manifest.json', json.dumps(manifest, ensure_ascii=False, indent=2))
 with ZipFile(output) as archive:
     assert archive.testzip() is None
     assert not any('.env.local' in name or 'node_modules/' in name or '.wrangler/' in name for name in archive.namelist())
