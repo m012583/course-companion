@@ -51,7 +51,7 @@ export async function POST(request: Request) {
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${ai.apiKey}`,
-          'User-Agent': 'course-knowledge-base/0.4',
+          'User-Agent': 'kezhiyu/0.5.1',
         },
         signal: AbortSignal.any([request.signal, AbortSignal.timeout(90000)]),
         body: JSON.stringify({

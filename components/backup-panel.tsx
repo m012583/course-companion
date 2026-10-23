@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Download, Upload } from 'lucide-react';
 import { parseBackup } from '@/lib/backup';
+import { BRAND_NAME } from '@/lib/branding';
 export default function BackupPanel({
   onExport,
   onRestore,
@@ -72,7 +73,7 @@ export default function BackupPanel({
       );
       const a = document.createElement('a');
       a.href = url;
-      a.download = `课伴迁移包-${new Date().toISOString().slice(0, 10)}.kb.json`;
+      a.download = `${BRAND_NAME}迁移包-${new Date().toISOString().slice(0, 10)}.kb.json`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
       setMessage('迁移包已下载，包含正文、记录和原始附件。');

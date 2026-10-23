@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { PRODUCT_TITLE } from '@/lib/branding';
 import { Geist, Geist_Mono } from 'next/font/google';
 import './globals.css';
 
@@ -13,7 +14,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: '课伴 · 大学生课程知识库',
+  title: PRODUCT_TITLE,
   description:
     '按课程阅读资料、核对 AI 引用、整理知识笔记，并通过主动回忆安排复习。',
 };

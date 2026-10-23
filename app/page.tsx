@@ -8,6 +8,7 @@ import type {
   ApiData,
   Workspace,
 } from '@/lib/workspace-types';
+import { BRAND_NAME, migrateBrandPreferences } from '@/lib/branding';
 import { locateSource } from '@/lib/source-anchor';
 import MaterialReader from '@/components/material-reader';
 import LearningFlow from '@/components/learning-flow';
@@ -107,7 +108,7 @@ import {
   type Passage,
 } from '@/lib/knowledge';
 const DEFAULT_PREFERENCES: Preferences = {
-  brandName: '课伴',
+  brandName: BRAND_NAME,
   userName: '同学',
   semester: '2026 秋季学期',
 };
@@ -537,6 +538,9 @@ export default function Home() {
     setCourses((current) => current.map((c) => (c.id === id ? update(c) : c)));
   };
   function applyState(state: Workspace) {
+    const restoredPreferences = migrateBrandPreferences(
+      state.preferences ?? DEFAULT_PREFERENCES,
+    );
     const draft = readNoteDraft(state.noteDraft);
     setDraftNote(draft.note);
     setDraftOrigin(draft.origin);
@@ -564,14 +568,14 @@ export default function Home() {
       courseId: restoredCourseId,
       sessionId: state.sessionId ?? '',
       activeView: state.activeView ?? 'home',
-      preferences: state.preferences ?? DEFAULT_PREFERENCES,
+      preferences: restoredPreferences,
       model: state.model ?? 'deepseek-v4-flash',
       noteDraft: readNoteDraft(state.noteDraft),
     });
     setActiveCourseId(restoredCourseId);
     setActiveSessionId(state.sessionId ?? '');
     setActiveView(state.activeView ?? 'home');
-    setPreferences(state.preferences ?? DEFAULT_PREFERENCES);
+    setPreferences(restoredPreferences);
     setModel(state.model ?? 'deepseek-v4-flash');
   }
   useEffect(() => {
@@ -3086,7 +3090,7 @@ export default function Home() {
                   >
                     <div className="message-label">
                       {message.role === 'assistant'
-                        ? '课伴'
+                        ? BRAND_NAME
                         : preferences.userName}
                       <button
                         className="icon-button message-delete"
@@ -4359,7 +4363,7 @@ export default function Home() {
               onClick={() =>
                 download(
                   JSON.stringify(workspaceState, null, 2),
-                  `课伴正文备份-${localDate()}.json`,
+                  `${BRAND_NAME}正文备份-${localDate()}.json`,
                   'application/json',
                 )
               }
@@ -4372,7 +4376,7 @@ export default function Home() {
           {welcome && activeView === 'home' && (
             <aside className="version-strip">
               <span>
-                <strong>研学增强版</strong> · 从教材出发，练习后安排下一步
+                <strong>{BRAND_NAME}</strong> · 从教材出发，练习后安排下一步
               </span>
               <button
                 aria-label="关闭介绍"
@@ -5082,7 +5086,7 @@ export default function Home() {
               onClick={() =>
                 download(
                   JSON.stringify(workspaceState, null, 2),
-                  `课伴正文备份-${localDate()}.json`,
+                  `${BRAND_NAME}正文备份-${localDate()}.json`,
                   'application/json',
                 )
               }

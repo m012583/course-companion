@@ -1,4 +1,5 @@
 import { readNoteDraft } from './note-draft';
+import { migrateBrandPreferences } from './branding';
 import { validatePractice } from './practice';
 import { readGuideContent } from './course-guide';
 import { validatePlan, type ReviewPlan } from './review-plans';
@@ -347,7 +348,12 @@ export function validateWorkspace(value: unknown): BackupState {
   return Object.fromEntries(
     safeKeys
       .filter((key) => value[key] !== undefined)
-      .map((key) => [key, value[key]]),
+      .map((key) => [
+        key,
+        key === 'preferences'
+          ? migrateBrandPreferences(value.preferences as { brandName: string })
+          : value[key],
+      ]),
   ) as BackupState;
 }
 export function collectFileIds(value: unknown): string[] {

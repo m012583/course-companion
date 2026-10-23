@@ -79,7 +79,7 @@ let port = first;
 for (; port <= first + 10; port++) {
   const existing = await health(port);
   if (existing?.app === 'course-kb-v2' && existing.instance === instance) {
-    console.log(`Already running: http://localhost:${port}/`);
+    console.log(`课知屿已在运行：http://localhost:${port}/`);
     openBrowser(`http://localhost:${port}/`);
     process.exit(0);
   }
@@ -193,12 +193,12 @@ if (ready) {
     }),
   );
   console.log(
-    `Enhanced version ready: ${url}\nData: ${resolve('.wrangler')}\nKeep this launcher running. Closing it stops this local app.`,
+    `课知屿已启动：${url}\n本地数据：${resolve('.wrangler')}\n请保持此启动窗口开启，关闭窗口将停止服务。`,
   );
   openBrowser(url);
 } else {
   console.error(
-    'The enhanced version did not become ready. Check the errors above.',
+    '课知屿启动未完成，请检查上方错误信息。',
   );
   stop();
   process.exitCode = 1;
